@@ -1,0 +1,102 @@
+{
+    "meta": {
+        "message": "Success Get Domestic Destinations",
+        "code": 200,
+        "status": "success"
+    },
+    "data": [
+        {
+            "id": 17486,
+            "label": "KEBON JERUK, KEBON JERUK, JAKARTA BARAT, DKI JAKARTA, 11530",
+            "province_name": "DKI JAKARTA",
+            "city_name": "JAKARTA BARAT",
+            "district_name": "KEBON JERUK",
+            "subdistrict_name": "KEBON JERUK",
+            "zip_code": "11530"
+        },
+        {
+            "id": 8155,
+            "label": "KEBON KELAPA, BOGOR TENGAH - KOTA, BOGOR, JAWA BARAT, 16125",
+            "province_name": "JAWA BARAT",
+            "city_name": "BOGOR",
+            "district_name": "BOGOR TENGAH - KOTA",
+            "subdistrict_name": "KEBON KELAPA",
+            "zip_code": "16125"
+        },
+        {
+            "id": 17489,
+            "label": "KELAPA DUA, KEBON JERUK, JAKARTA BARAT, DKI JAKARTA, 11550",
+            "province_name": "DKI JAKARTA",
+            "city_name": "JAKARTA BARAT",
+            "district_name": "KEBON JERUK",
+            "subdistrict_name": "KELAPA DUA",
+            "zip_code": "11550"
+        },
+        {
+            "id": 17602,
+            "label": "KEBON KELAPA, GAMBIR, JAKARTA PUSAT, DKI JAKARTA, 10120",
+            "province_name": "DKI JAKARTA",
+            "city_name": "JAKARTA PUSAT",
+            "district_name": "GAMBIR",
+            "subdistrict_name": "KEBON KELAPA",
+            "zip_code": "10120"
+        },
+        {
+            "id": 6854,
+            "label": "PONDOK KELAPA, PONDOK KELAPA, BENGKULU TENGAH, BENGKULU, 38371",
+            "province_name": "BENGKULU",
+            "city_name": "BENGKULU TENGAH",
+            "district_name": "PONDOK KELAPA",
+            "subdistrict_name": "PONDOK KELAPA",
+            "zip_code": "38371"
+        },
+        {
+            "id": 6859,
+            "label": "SUNDA KELAPA, PONDOK KELAPA, BENGKULU TENGAH, BENGKULU, 38371",
+            "province_name": "BENGKULU",
+            "city_name": "BENGKULU TENGAH",
+            "district_name": "PONDOK KELAPA",
+            "subdistrict_name": "SUNDA KELAPA",
+            "zip_code": "38371"
+        },
+        {
+            "id": 17641,
+            "label": "KELAPA GADING BARAT, KELAPA GADING, JAKARTA UTARA, DKI JAKARTA, 14240",
+            "province_name": "DKI JAKARTA",
+            "city_name": "JAKARTA UTARA",
+            "district_name": "KELAPA GADING",
+            "subdistrict_name": "KELAPA GADING BARAT",
+            "zip_code": "14240"
+        },
+        {
+            "id": 17642,
+            "label": "KELAPA GADING TIMUR, KELAPA GADING, JAKARTA UTARA, DKI JAKARTA, 14240",
+            "province_name": "DKI JAKARTA",
+            "city_name": "JAKARTA UTARA",
+            "district_name": "KELAPA GADING",
+            "subdistrict_name": "KELAPA GADING TIMUR",
+            "zip_code": "14240"
+        },
+        {
+            "id": 34443,
+            "label": "KELAPA LIMA, KELAPA LIMA, KUPANG, NUSA TENGGARA TIMUR (NTT), 85228",
+            "province_name": "NUSA TENGGARA TIMUR (NTT)",
+            "city_name": "KUPANG",
+            "district_name": "KELAPA LIMA",
+            "subdistrict_name": "KELAPA LIMA",
+            "zip_code": "85228"
+        },
+        {
+            "id": 49443,
+            "label": "KELAPA, KELAPA, BANGKA BARAT, BANGKA BELITUNG, 33364",
+            "province_name": "BANGKA BELITUNG",
+            "city_name": "BANGKA BARAT",
+            "district_name": "KELAPA",
+            "subdistrict_name": "KELAPA",
+            "zip_code": "33364"
+        }
+    ]
+}
+
+
+
