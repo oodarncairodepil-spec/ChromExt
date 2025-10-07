@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchTemplates } from '../lib/supabase'
+import { generateWhatsAppMessage } from '../utils/ogUtils'
 
 interface Template {
   id: string;
@@ -23,7 +24,94 @@ const Templates: React.FC = () => {
   const [filteredTemplates, setFilteredTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+
+  // WhatsApp injection function using message passing to background script
+  const insertTextIntoWhatsApp = async (text: string): Promise<boolean> => {
+    try {
+      // ensure we're in an extension page
+      if (typeof chrome === "undefined" || !chrome.runtime?.id) {
+        throw new Error("Chrome extension APIs not available");
+      }
+
+      const res = await chrome.runtime.sendMessage({
+        type: "INSERT_WHATSAPP",
+        text,
+        autoSend: false
+      });
+
+      if (!res?.ok) {
+        throw new Error(res?.error || "Failed to insert into WhatsApp");
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('WhatsApp injection failed:', error)
+      return false
+    }
+  }
+
+  const handleSendImage = async (e: React.MouseEvent, template: Template) => {
+    e.stopPropagation() // Prevent card click navigation
+    
+    // Clear any existing messages
+    setError(null)
+    setSuccess(null)
+    
+    try {
+      // Generate WhatsApp message with template content
+      const message = await generateWhatsAppMessage({
+        title: template.title || 'Template',
+        message: template.message || '',
+        image_url: template.image_url,
+        product_id: template.product_id
+      })
+      
+      // Try to inject into WhatsApp Web
+      const injected = await insertTextIntoWhatsApp(message)
+      
+      if (injected) {
+        setSuccess('Template message sent to WhatsApp!')
+      } else {
+        // Fallback: copy to clipboard
+        await navigator.clipboard.writeText(message)
+        setError('Could not inject into WhatsApp. Message copied to clipboard instead.')
+      }
+    } catch (error) {
+      console.error('Error sending template to WhatsApp:', error)
+      
+      let errorMessage = 'Failed to send template to WhatsApp'
+      if (error instanceof Error) {
+        if (error.message.includes('Chrome extension APIs')) {
+          errorMessage = 'Chrome extension APIs not available. Please ensure this is running as a Chrome extension.'
+        } else if (error.message.includes('web.whatsapp.com')) {
+          errorMessage = 'Please open WhatsApp Web (web.whatsapp.com) and select a chat first.'
+        } else if (error.message.includes('No active tab')) {
+          errorMessage = 'No active browser tab found. Please make sure you have WhatsApp Web open.'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+      
+      setError(errorMessage)
+      
+      // Try to copy to clipboard as fallback
+      try {
+        const message = await generateWhatsAppMessage({
+          title: template.title || 'Template',
+          message: template.message || '',
+          image_url: template.image_url,
+          product_id: template.product_id
+        })
+        await navigator.clipboard.writeText(message)
+        setError(errorMessage + ' Message copied to clipboard instead.')
+      } catch (clipboardError) {
+        // Clipboard fallback failed too
+        console.error('Clipboard fallback failed:', clipboardError)
+      }
+    }
+  }
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -129,6 +217,30 @@ const Templates: React.FC = () => {
         />
       </div>
       
+      {/* Success Message */}
+      {success && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="flex items-center space-x-2 text-green-600">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span>{success}</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center space-x-2 text-red-600">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{error}</span>
+          </div>
+        </div>
+      )}
+      
       {filteredTemplates.length === 0 ? (
         <div className="text-center py-8">
           <div className="text-gray-400 mb-2">
@@ -143,16 +255,38 @@ const Templates: React.FC = () => {
           {filteredTemplates.map((template) => (
             <div 
               key={template.id} 
-              className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
+              className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer relative"
               onClick={() => navigate(`/templates/${template.id}`)}
             >
-              <div className="h-32 bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center overflow-hidden">
-                <img 
-                  src={`https://via.placeholder.com/300x128/ddd6fe/6366f1?text=${template.title?.charAt(0) || 'T'}`}
-                  alt={template.title || 'Template'}
-                  className="w-full h-full object-cover"
-                />
-              </div>
+              {/* Send Icon */}
+              <button
+                onClick={(e) => handleSendImage(e, template)}
+                className="absolute top-2 right-2 z-10 p-2 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-sm hover:shadow-md transition-all duration-200 group"
+                title="Send to WhatsApp"
+              >
+                <svg 
+                  className="w-4 h-4 text-gray-600 group-hover:text-blue-600 transition-colors" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M5 12h14m-7-7l7 7-7 7" 
+                  />
+                </svg>
+              </button>
+              {template.image_url && (
+                <div className="h-32 overflow-hidden">
+                  <img 
+                    src={template.image_url}
+                    alt={template.title || 'Template'}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
               <div className="p-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-2">
                   {template.title || 'Untitled Template'}
@@ -160,18 +294,7 @@ const Templates: React.FC = () => {
                 <p className="text-xs text-gray-500 line-clamp-2 mb-3">
                   {template.message && template.message.length > 100 ? `${template.message.substring(0, 100)}...` : (template.message || 'No message available')}
                 </p>
-                <div className="flex justify-between items-center text-xs text-gray-500 mb-2">
-                  <span>Used: {template.usage_count} times</span>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    template.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                  }`}>
-                    {template.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
 
-                <div className="text-xs text-gray-400">
-                  <span>Created: {new Date(template.created_at).toLocaleDateString()}</span>
-                </div>
               </div>
             </div>
           ))}

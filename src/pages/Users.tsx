@@ -49,7 +49,7 @@ const Users: React.FC = () => {
         if (usersError) throw usersError
         
         const { data: cartsData, error: cartsError } = await supabase
-          .from('carts')
+          .from('cart_items')
           .select('*')
           .order('created_at', { ascending: false })
         
@@ -69,7 +69,10 @@ const Users: React.FC = () => {
         
       } catch (err) {
         console.error('Error loading users:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load users')
+        // Only set error if it's not a "no rows" type error
+        if (err instanceof Error && !err.message.includes('no rows')) {
+          setError(err.message)
+        }
       } finally {
         setLoading(false)
       }
@@ -96,6 +99,17 @@ const Users: React.FC = () => {
   const handleAutoDetect = async () => {
     setIsDetecting(true);
     try {
+      // Check if Chrome APIs are available
+      if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.scripting) {
+        setDialogContent({ 
+          phone: '', 
+          userName: '', 
+          message: 'Chrome extension APIs not available. Please make sure you are using this extension in a Chrome browser.' 
+        });
+        setShowErrorDialog(true);
+        return;
+      }
+
       // Query for the active tab
       const tabs = await chrome.tabs.query({ 
         active: true, 
@@ -124,7 +138,7 @@ const Users: React.FC = () => {
         return;
       }
       
-      // Execute script to extract phone numbers from WhatsApp Web using data-id attributes
+      // Execute script to extract phone number from WhatsApp Web using comprehensive data-id method
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
@@ -132,43 +146,55 @@ const Users: React.FC = () => {
             // Function to extract phone number from WhatsApp data-id attribute
             const extractPhoneFromDataId = (dataId: string): string | null => {
               // WhatsApp data-id format: "true_PHONENUMBER@c.us_MESSAGEID" or similar
-              const phoneMatch = dataId.match(/(?:true_|false_)?(\d+)@c\.us/);
-              return phoneMatch ? phoneMatch[1] : null;
-            };
+              const phoneMatch = dataId.match(/(?:true_|false_)?(\d+)@c\.us/)
+              return phoneMatch ? phoneMatch[1] : null
+            }
 
-            const phoneNumbers = new Set<string>();
+            const phoneNumbers = new Set<string>()
 
             // Search for elements with data-id attributes
-            const elementsWithDataId = document.querySelectorAll('[data-id]');
+            const elementsWithDataId = document.querySelectorAll('[data-id]')
             elementsWithDataId.forEach(element => {
-              const dataId = element.getAttribute('data-id');
+              const dataId = element.getAttribute('data-id')
               if (dataId) {
-                const phone = extractPhoneFromDataId(dataId);
+                const phone = extractPhoneFromDataId(dataId)
                 if (phone && phone.length >= 10) {
-                  phoneNumbers.add(phone);
+                  phoneNumbers.add(phone)
                 }
               }
-            });
+            })
 
             // Also check header and sidebar for active chat indicators
-            const headerElements = document.querySelectorAll('header [data-id], [role="banner"] [data-id]');
+            const headerElements = document.querySelectorAll('header [data-id], [role="banner"] [data-id]')
             headerElements.forEach(element => {
-              const dataId = element.getAttribute('data-id');
+              const dataId = element.getAttribute('data-id')
               if (dataId) {
-                const phone = extractPhoneFromDataId(dataId);
+                const phone = extractPhoneFromDataId(dataId)
                 if (phone && phone.length >= 10) {
-                  phoneNumbers.add(phone);
+                  phoneNumbers.add(phone)
                 }
               }
-            });
+            })
 
-            const phoneArray = Array.from(phoneNumbers);
+            // Additional fallback: look for phone numbers in specific WhatsApp elements
+            const chatHeaderElements = document.querySelectorAll('[data-testid="chat-header"] [data-id], .chat-header [data-id]')
+            chatHeaderElements.forEach(element => {
+              const dataId = element.getAttribute('data-id')
+              if (dataId) {
+                const phone = extractPhoneFromDataId(dataId)
+                if (phone && phone.length >= 10) {
+                  phoneNumbers.add(phone)
+                }
+              }
+            })
+
+            const phoneArray = Array.from(phoneNumbers)
             return {
               success: true,
               phoneNumbers: phoneArray,
               activePhone: phoneArray[0] || null,
               totalFound: phoneArray.length
-            };
+            }
           } catch (error: any) {
             return {
               success: false,
@@ -176,15 +202,14 @@ const Users: React.FC = () => {
               phoneNumbers: [],
               activePhone: null,
               totalFound: 0
-            };
+            }
           }
         }
       });
       
       const result = results[0]?.result;
       if (result?.success && result.activePhone) {
-        console.log('Phone detected using WhatsApp data-id method:', result.activePhone);
-        console.log('All found phone numbers:', result.phoneNumbers);
+        console.log('Phone detected:', result.activePhone);
         
         // Automatically paste the phone number into search box and search
         setSearchTerm(result.activePhone);
@@ -215,10 +240,6 @@ const Users: React.FC = () => {
           });
           setShowRegisterDialog(true);
         }
-        
-        if (result.totalFound > 1) {
-          console.log(`Multiple phone numbers found (${result.totalFound}):`, result.phoneNumbers);
-        }
       } else {
         // Cannot detect phone number - likely a group chat or other issue
         setDialogContent({ 
@@ -230,10 +251,16 @@ const Users: React.FC = () => {
       }
     } catch (error) {
       console.error('Auto detect error:', error);
+      let errorMessage = 'Error during phone number detection.';
+      
+      if (error instanceof Error) {
+        errorMessage = `Error: ${error.message}`;
+      }
+      
       setDialogContent({ 
         phone: '', 
         userName: '', 
-        message: 'Error during data extraction. Please make sure you have the necessary permissions.' 
+        message: errorMessage 
       });
       setShowErrorDialog(true);
     } finally {
@@ -321,8 +348,51 @@ const Users: React.FC = () => {
         </div>
 
         {filteredUsers.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            {searchTerm.length >= 3 ? 'No users found matching your search.' : 'Enter at least 3 characters to search users.'}
+          <div className="text-center py-12">
+            {searchTerm.length >= 3 ? (
+              <div className="text-gray-500">
+                No users found matching your search.
+              </div>
+            ) : users.length === 0 ? (
+              <div className="space-y-4">
+                <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                  </svg>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-medium text-gray-900">No users yet</h3>
+                  <p className="text-gray-500 max-w-sm mx-auto">
+                    Get started by adding your first user or use the Auto Detect feature to find users from WhatsApp chats.
+                  </p>
+                </div>
+                <div className="flex justify-center space-x-3">
+                  <button
+                    onClick={() => navigate('/users/create')}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>Add First User</span>
+                  </button>
+                  <button
+                    onClick={handleAutoDetect}
+                    disabled={isDetecting}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-green-400 flex items-center space-x-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <span>Auto Detect</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-gray-500">
+                Enter at least 3 characters to search users.
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

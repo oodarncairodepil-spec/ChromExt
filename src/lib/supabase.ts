@@ -93,6 +93,62 @@ export async function uploadImage(file: File, bucket: string, folder?: string): 
   }
 }
 
+// Upload product image and save to product_images table
+export async function uploadProductImage(file: File, productId: string, isPrimary: boolean = true): Promise<string> {
+  try {
+    // Upload image to storage
+    const imageUrl = await uploadImage(file, 'products', productId)
+    
+    // Save image record to product_images table
+    const { error } = await supabase
+      .from('product_images')
+      .insert({
+        product_id: productId,
+        image_url: imageUrl,
+        is_primary: isPrimary
+      })
+    
+    if (error) {
+      console.error('Error saving product image:', error)
+      throw error
+    }
+    
+    return imageUrl
+  } catch (error) {
+    console.error('Failed to upload product image:', error)
+    throw error
+  }
+}
+
+// Upload template image and link to product if provided
+export async function uploadTemplateImage(file: File, templateId: string, productId?: string): Promise<string> {
+  try {
+    // Upload image to storage
+    const imageUrl = await uploadImage(file, 'quick-reply-images', templateId)
+    
+    // If productId is provided, also save to product_images table
+    if (productId) {
+      const { error } = await supabase
+        .from('product_images')
+        .insert({
+          product_id: productId,
+          image_url: imageUrl,
+          is_primary: false // Template images are not primary by default
+        })
+      
+      if (error) {
+        console.error('Error linking template image to product:', error)
+        // Don't throw error here, just log it
+      }
+    }
+    
+    return imageUrl
+  } catch (error) {
+    console.error('Failed to upload template image:', error)
+    throw error
+  }
+}
+
 // Mock data for demonstration
 const mockProducts = [
   { id: 1, name: 'Product A', price: 29.99, category: 'Electronics' },
@@ -163,7 +219,7 @@ export const fetchTemplates = async () => {
 export const fetchCarts = async () => {
   try {
     const { data, error } = await supabase
-      .from('carts')
+      .from('cart_items')
       .select('id, user_id, product_id, quantity, price, created_at, updated_at')
       .order('created_at', { ascending: false });
     

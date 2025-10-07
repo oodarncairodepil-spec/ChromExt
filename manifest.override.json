@@ -1,0 +1,4 @@
+{
+  "permissions": ["sidePanel", "activeTab", "tabs", "scripting"],
+  "host_permissions": ["https://*/*"]
+}

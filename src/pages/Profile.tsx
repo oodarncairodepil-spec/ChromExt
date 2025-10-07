@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getProvinces, getCitiesByProvince, getDistrictsByCity, searchLocations, Province, City, District, LocationSearchResult } from '../lib/shipping'
+import { useNavigate } from 'react-router-dom'
 import Loading from '../components/Loading'
 
 interface UserProfile {
@@ -23,6 +24,7 @@ interface UserProfile {
 
 const Profile: React.FC = () => {
   const { user, signOut } = useAuth()
+  const navigate = useNavigate()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -376,8 +378,12 @@ const Profile: React.FC = () => {
     <div className="max-w-4xl mx-auto p-6">
       <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h1 className="text-2xl font-bold text-gray-900">Shop Profile</h1>
-            <p className="text-gray-600 mt-1">Manage your shop information and pickup location</p>
+            <div className="flex justify-between items-start">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Shop Profile</h1>
+                <p className="text-gray-600 mt-1">Manage your shop information and pickup location</p>
+              </div>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-6">

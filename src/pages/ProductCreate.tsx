@@ -1,7 +1,14 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, uploadImage } from '../lib/supabase'
+import { supabase, uploadImage, uploadProductImage } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { 
+  generateVariantCombinations, 
+  createVariantOptions, 
+  createProductVariants,
+  VariantTier,
+  VariantCombination 
+} from '../utils/variantUtils'
 
 interface ProductFormData {
   name: string;
@@ -10,8 +17,14 @@ interface ProductFormData {
   stock: number;
   is_digital: boolean;
   weight: string;
-  sku: string;
   status: string;
+  has_variants: boolean;
+}
+
+interface VariantTierForm {
+  id: string;
+  name: string;
+  options: string[];
 }
 
 const ProductCreate: React.FC = () => {
@@ -24,17 +37,105 @@ const ProductCreate: React.FC = () => {
     stock: 0,
     is_digital: false,
     weight: '',
-    sku: '',
-    status: 'active'
+    status: 'active',
+    has_variants: false
   })
+  const [variantTiers, setVariantTiers] = useState<VariantTierForm[]>([])
+  const [previewCombinations, setPreviewCombinations] = useState<VariantCombination[]>([])
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showVariantPreview, setShowVariantPreview] = useState(false)
 
-  const handleInputChange = (field: keyof ProductFormData, value: any) => {
+  const handleInputChange = async (field: keyof ProductFormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }))
+    
+    // Reset variants when has_variants is toggled off
+    if (field === 'has_variants' && !value) {
+      setVariantTiers([])
+      setPreviewCombinations([])
+      setShowVariantPreview(false)
+    }
   }
+
+  const addVariantTier = () => {
+    const newTier: VariantTierForm = {
+      id: Date.now().toString(),
+      name: '',
+      options: ['']
+    }
+    setVariantTiers(prev => [...prev, newTier])
+  }
+
+  const removeVariantTier = (tierId: string) => {
+    setVariantTiers(prev => prev.filter(tier => tier.id !== tierId))
+    updatePreviewCombinations()
+  }
+
+  const updateVariantTier = (tierId: string, field: 'name' | 'options', value: string | string[]) => {
+    setVariantTiers(prev => prev.map(tier => 
+      tier.id === tierId ? { ...tier, [field]: value } : tier
+    ))
+    updatePreviewCombinations()
+  }
+
+  const addVariantOption = (tierId: string) => {
+    setVariantTiers(prev => prev.map(tier => 
+      tier.id === tierId ? { ...tier, options: [...tier.options, ''] } : tier
+    ))
+  }
+
+  const removeVariantOption = (tierId: string, optionIndex: number) => {
+    setVariantTiers(prev => prev.map(tier => 
+      tier.id === tierId ? {
+        ...tier, 
+        options: tier.options.filter((_, index) => index !== optionIndex)
+      } : tier
+    ))
+    updatePreviewCombinations()
+  }
+
+  const updateVariantOption = (tierId: string, optionIndex: number, value: string) => {
+    setVariantTiers(prev => prev.map(tier => 
+      tier.id === tierId ? {
+        ...tier,
+        options: tier.options.map((option, index) => 
+          index === optionIndex ? value : option
+        )
+      } : tier
+    ))
+    updatePreviewCombinations()
+  }
+
+  const updatePreviewCombinations = () => {
+    if (!formData.name.trim() || variantTiers.length === 0) {
+      setPreviewCombinations([])
+      return
+    }
+
+    const validTiers: VariantTier[] = variantTiers
+      .filter(tier => tier.name.trim() && tier.options.some(opt => opt.trim()))
+      .map((tier, index) => ({
+        level: index + 1,
+        name: tier.name.trim(),
+        options: tier.options.filter(opt => opt.trim()).map(opt => opt.trim())
+      }))
+
+    if (validTiers.length > 0) {
+      const combinations = generateVariantCombinations(formData.name.trim(), validTiers)
+      setPreviewCombinations(combinations)
+    } else {
+      setPreviewCombinations([])
+    }
+  }
+
+  // Update preview when product name changes
+  React.useEffect(() => {
+    if (formData.has_variants) {
+      updatePreviewCombinations()
+    }
+  }, [formData.name, formData.has_variants])
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -53,6 +154,15 @@ const ProductCreate: React.FC = () => {
     return numericValue ? parseInt(numericValue).toLocaleString('id-ID') : ''
   }
 
+  const formatStock = (value: number): string => {
+    return value ? value.toLocaleString('id-ID') : ''
+  }
+
+  const formatWeight = (value: string): string => {
+    const numericValue = value.replace(/[^0-9]/g, '')
+    return numericValue ? parseInt(numericValue).toLocaleString('id-ID') : ''
+  }
+
   const parseFormattedInput = (value: string): string => {
     return value.replace(/,/g, '')
   }
@@ -65,33 +175,105 @@ const ProductCreate: React.FC = () => {
       return
     }
 
+    // Validation
+    if (!formData.name.trim()) {
+      setError('Product name is required')
+      return
+    }
+    if (!formData.price || parseFloat(parseFormattedInput(formData.price)) <= 0) {
+      setError('Valid price is required')
+      return
+    }
+    
+    // SKU will be generated at variant level, not product level
+
+    // Validate variants if enabled
+    if (formData.has_variants) {
+      if (variantTiers.length === 0) {
+        setError('Please add at least one variant tier or disable variants')
+        return
+      }
+      
+      const hasInvalidTiers = variantTiers.some(tier => 
+        !tier.name.trim() || tier.options.length === 0 || !tier.options.some(opt => opt.trim())
+      )
+      
+      if (hasInvalidTiers) {
+        setError('All variant tiers must have a name and at least one option')
+        return
+      }
+      
+      if (previewCombinations.length === 0) {
+        setError('No valid variant combinations found')
+        return
+      }
+    }
+
     try {
       setCreating(true)
       setError(null)
 
-      let imageUrl = ''
-      if (imageFile) {
-        imageUrl = await uploadImage(imageFile, 'products')
-      }
-
+      // First create the product without image
       const productData = {
         user_id: user.id,
         name: formData.name,
         description: formData.description,
-        price: parseFormattedInput(formData.price),
-        stock: formData.stock,
+        price: formData.price ? parseFormattedInput(formData.price) : 0,
+        stock: formData.has_variants ? 0 : formData.stock, // Set stock to 0 for variant products
         is_digital: formData.is_digital,
-        weight: formData.weight,
-        sku: formData.sku,
+        weight: formData.weight ? parseFormattedInput(formData.weight) : null,
         status: formData.status,
-        image: imageUrl || null
+        has_variants: formData.has_variants, // Add has_variants flag
+        image: null // Will be updated after image upload
       }
 
-      const { error: insertError } = await supabase
+      const { data: product, error: insertError } = await supabase
         .from('products')
         .insert(productData)
+        .select()
+        .single()
 
       if (insertError) throw insertError
+
+      // Upload image if provided and link to product
+      if (imageFile && product) {
+        const imageUrl = await uploadProductImage(imageFile, product.id, true)
+        
+        // Update product with image URL for backward compatibility
+        const { error: updateError } = await supabase
+          .from('products')
+          .update({ image: imageUrl })
+          .eq('id', product.id)
+        
+        if (updateError) {
+          console.error('Error updating product image:', updateError)
+          // Don't throw error, product is already created
+        }
+      }
+
+      // Create variants if enabled
+      if (formData.has_variants && product) {
+        try {
+          // Create variant options
+          const validTiers: VariantTier[] = variantTiers
+            .filter(tier => tier.name.trim() && tier.options.some(opt => opt.trim()))
+            .map((tier, index) => ({
+              level: index + 1,
+              name: tier.name.trim(),
+              options: tier.options.filter(opt => opt.trim()).map(opt => opt.trim())
+            }))
+
+          await createVariantOptions(product.id, validTiers)
+
+          // Create product variants
+          const defaultPrice = parseFloat(parseFormattedInput(formData.price)) || 0
+          await createProductVariants(product.id, previewCombinations, defaultPrice, formData.stock)
+        } catch (variantError: any) {
+          console.error('Error creating variants:', variantError)
+          setError(`Product created but failed to create variants: ${variantError.message}`)
+          return
+        }
+      }
 
       // Navigate back to products list
       navigate('/products')
@@ -178,19 +360,7 @@ const ProductCreate: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label htmlFor="sku" className="block text-sm font-medium text-gray-700 mb-1">
-                SKU
-              </label>
-              <input
-                id="sku"
-                type="text"
-                value={formData.sku}
-                onChange={(e) => handleInputChange('sku', e.target.value)}
-                placeholder="Enter SKU"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {/* SKU will be generated at variant level */}
 
             <div className="md:col-span-2">
               <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
@@ -227,11 +397,14 @@ const ProductCreate: React.FC = () => {
               </label>
               <input
                 id="stock"
-                type="number"
-                value={formData.stock}
-                onChange={(e) => handleInputChange('stock', parseInt(e.target.value) || 0)}
+                type="text"
+                value={formatStock(formData.stock)}
+                onChange={(e) => {
+                  const numericValue = parseFormattedInput(e.target.value)
+                  const stockValue = numericValue === '' ? 0 : Number(numericValue)
+                  handleInputChange('stock', stockValue)
+                }}
                 placeholder="0"
-                min="0"
                 required
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -244,8 +417,8 @@ const ProductCreate: React.FC = () => {
               <input
                 id="weight"
                 type="text"
-                value={formData.weight}
-                onChange={(e) => handleInputChange('weight', e.target.value)}
+                value={formatWeight(formData.weight)}
+                onChange={(e) => handleInputChange('weight', parseFormattedInput(e.target.value))}
                 placeholder="Enter weight in grams"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -281,10 +454,152 @@ const ProductCreate: React.FC = () => {
                 </label>
               </div>
             </div>
+
+            <div className="md:col-span-2">
+              <div className="flex items-center space-x-2">
+                <input
+                  id="has_variants"
+                  type="checkbox"
+                  checked={formData.has_variants}
+                  onChange={(e) => handleInputChange('has_variants', e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="has_variants" className="text-sm font-medium text-gray-700">
+                  This product has variants (colors, sizes, etc.)
+                </label>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Enable this to create multiple variations of this product with different properties.
+              </p>
+            </div>
           </div>
         </div>
 
-
+        {/* Variant Configuration Section */}
+        {formData.has_variants && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Product Variants</h3>
+              <button
+                type="button"
+                onClick={addVariantTier}
+                disabled={variantTiers.length >= 3}
+                className="px-3 py-1 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Variant Tier
+              </button>
+            </div>
+            
+            {variantTiers.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <p>No variant tiers added yet.</p>
+                <p className="text-sm">Click "Add Variant Tier" to create your first variant (e.g., Color, Size, Style).</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {variantTiers.map((tier, tierIndex) => (
+                  <div key={tier.id} className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-medium text-gray-900">Tier {tierIndex + 1}</h4>
+                      <button
+                        type="button"
+                        onClick={() => removeVariantTier(tier.id)}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Remove Tier
+                      </button>
+                    </div>
+                    
+                    <div className="mb-3">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Tier Name (e.g., Color, Size, Style)
+                      </label>
+                      <input
+                        type="text"
+                        value={tier.name}
+                        onChange={(e) => updateVariantTier(tier.id, 'name', e.target.value)}
+                        placeholder="Enter tier name"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Options
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => addVariantOption(tier.id)}
+                          className="text-blue-600 hover:text-blue-800 text-sm"
+                        >
+                          Add Option
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        {tier.options.map((option, optionIndex) => (
+                          <div key={optionIndex} className="flex items-center space-x-2">
+                            <input
+                              type="text"
+                              value={option}
+                              onChange={(e) => updateVariantOption(tier.id, optionIndex, e.target.value)}
+                              placeholder={`Option ${optionIndex + 1}`}
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            {tier.options.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeVariantOption(tier.id, optionIndex)}
+                                className="text-red-600 hover:text-red-800 text-sm px-2"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* Preview Section */}
+            {previewCombinations.length > 0 && (
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium text-gray-900">
+                    Preview: {previewCombinations.length} Variant{previewCombinations.length !== 1 ? 's' : ''} Will Be Created
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowVariantPreview(!showVariantPreview)}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    {showVariantPreview ? 'Hide' : 'Show'} Preview
+                  </button>
+                </div>
+                
+                {showVariantPreview && (
+                  <div className="bg-gray-50 rounded-lg p-4 max-h-60 overflow-y-auto">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                      {previewCombinations.map((combo, index) => (
+                        <div key={index} className="text-gray-700">
+                          {index + 1}. {combo.fullName}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <p className="text-sm text-gray-500 mt-2">
+                  Each variant will inherit the base price and stock quantity. You can modify individual variant properties after creation.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-end space-x-4">
           <button

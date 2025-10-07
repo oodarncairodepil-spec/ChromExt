@@ -5,8 +5,9 @@
   "description": "A Chrome MV3 extension with side panel React app",
   "author": "Your Name",
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "plasmo build",
+    "dev": "plasmo dev --target=chrome-mv3-prod",
+    "dev-original": "plasmo dev",
+    "build": "plasmo build && node -e \"const fs = require('fs'); const manifest = JSON.parse(fs.readFileSync('build/chrome-mv3-prod/manifest.json', 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*']; fs.writeFileSync('build/chrome-mv3-prod/manifest.json', JSON.stringify(manifest, null, 2));\"",
     "package": "plasmo package"
   },
   "dependencies": {
@@ -27,16 +28,5 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "5.3.3"
-  },
-  "manifest": {
-    "host_permissions": [
-      "https://*/*"
-    ],
-    "permissions": [
-      "sidePanel",
-      "activeTab",
-      "tabs",
-      "scripting"
-    ]
   }
 }

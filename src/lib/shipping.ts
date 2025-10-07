@@ -45,25 +45,47 @@ export interface ApiResponse<T> {
 }
 
 // Base fetch function with API key
-const fetchWithAuth = async (url: string, options?: RequestInit): Promise<Response> => {
+const fetchWithAuth = async (url: string, options?: RequestInit, retries = 3): Promise<Response> => {
   const defaultHeaders = {
     'key': API_KEY!,
     'Content-Type': 'application/json',
   };
   
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...defaultHeaders,
-      ...options?.headers,
-    },
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...defaultHeaders,
+          ...options?.headers,
+        },
+      });
+      
+      // If rate limited (429), wait and retry
+      if (response.status === 429 && attempt < retries) {
+        const waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(`⏳ Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${retries}`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return response;
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+      // Wait before retrying on network errors
+      const waitTime = Math.pow(2, attempt) * 1000;
+      console.log(`🔄 Network error, retrying in ${waitTime}ms (${attempt + 1}/${retries})`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
   }
   
-  return response;
+  throw new Error('Max retries exceeded');
 };
 
 // Get all provinces

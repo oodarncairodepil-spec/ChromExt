@@ -5,18 +5,16 @@ module.exports = {
     name: "Chrome Side Panel Extension",
     version: "0.0.1",
     description: "A Chrome MV3 extension with side panel React app",
-    permissions: [
-      "sidePanel",
-      "activeTab"
-    ],
-    host_permissions: [
-      "https://*/*"
-    ],
+    permissions: ["sidePanel", "activeTab", "tabs", "scripting"],
+    host_permissions: ["https://*/*", "https://web.whatsapp.com/*"],
     action: {
       default_title: "Open Side Panel"
     },
     side_panel: {
       default_path: "src/sidepanel/index.html"
+    },
+    background: {
+      service_worker: "background.js"
     }
   }
 }

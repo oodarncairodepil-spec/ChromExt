@@ -104,8 +104,8 @@ const UserCreate: React.FC = () => {
   }
 
   const registerUser = async () => {
-    if (!formData.phone || !formData.name || !formData.full_address) {
-      setError('Please fill in all required fields (Phone, Name, Full Address)')
+    if (!formData.phone || !formData.name || !formData.address) {
+      setError('Please fill in all required fields (Phone, Name, Address)')
       return
     }
 
@@ -152,9 +152,9 @@ const UserCreate: React.FC = () => {
         <h1 className="text-3xl font-bold text-gray-800">Register New User</h1>
         <button
           onClick={() => navigate('/users')}
-          className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+          className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
         >
-          Back to Users
+          Back
         </button>
       </div>
 
@@ -206,12 +206,12 @@ const UserCreate: React.FC = () => {
 
           <div>
             <label htmlFor="reg-address" className="block text-sm font-medium text-gray-700 mb-1">
-              Full Address *
+              Address *
             </label>
             <textarea
               id="reg-address"
-              value={formData.full_address}
-              onChange={(e) => updateFormData('full_address', e.target.value)}
+              value={formData.address}
+              onChange={(e) => updateFormData('address', e.target.value)}
               placeholder="Enter complete address"
               required
               rows={3}

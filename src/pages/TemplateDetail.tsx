@@ -1,7 +1,20 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase, fetchTemplates } from '../lib/supabase'
+import { supabase, fetchTemplates, fetchProducts } from '../lib/supabase'
 import ConfirmDialog from '../components/ConfirmDialog'
+
+interface Product {
+  id: string;
+  name: string;
+  price: string;
+  stock: number;
+  status: string;
+  description: string;
+  weight: string;
+  is_digital: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 interface Template {
   id: string;
@@ -31,12 +44,27 @@ const TemplateDetail: React.FC = () => {
   })
   const [saving, setSaving] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [products, setProducts] = useState<Product[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(true)
 
   useEffect(() => {
     if (id) {
       loadTemplate()
     }
+    loadProducts()
   }, [id])
+
+  const loadProducts = async () => {
+    try {
+      setLoadingProducts(true)
+      const productsData = await fetchProducts()
+      setProducts(productsData)
+    } catch (error) {
+      console.error('Error loading products:', error)
+    } finally {
+      setLoadingProducts(false)
+    }
+  }
 
   const loadTemplate = async () => {
     try {
@@ -51,7 +79,12 @@ const TemplateDetail: React.FC = () => {
       }
       
       setTemplate(templateData)
-      setEditForm(templateData)
+      setEditForm({
+        title: templateData.title,
+        message: templateData.message,
+        is_active: templateData.is_active,
+        product_id: templateData.product_id
+      })
     } catch (err) {
       console.error('Error loading template:', err)
       setError(err instanceof Error ? err.message : 'Failed to load template')
@@ -83,6 +116,7 @@ const TemplateDetail: React.FC = () => {
           title: editForm.title,
           message: editForm.message,
           is_active: editForm.is_active,
+          product_id: editForm.product_id,
           updated_at: new Date().toISOString()
         })
         .eq('id', template.id)
@@ -232,11 +266,23 @@ const TemplateDetail: React.FC = () => {
         {/* Template Image */}
         <div className="mb-6 flex justify-center">
           <div className="w-48 h-32 bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg flex items-center justify-center overflow-hidden">
-            <img 
-              src={`https://via.placeholder.com/192x128/ddd6fe/6366f1?text=${template?.title?.charAt(0) || 'T'}`}
-              alt={template?.title || 'Template'}
-              className="w-full h-full object-cover"
-            />
+            {template?.image_url ? (
+              <img 
+                src={template.image_url}
+                alt={template?.title || 'Template'}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  target.nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+            ) : null}
+            <div className={`flex items-center justify-center w-full h-full ${template?.image_url ? 'hidden' : ''}`}>
+              <div className="text-4xl font-bold text-indigo-300">
+                {template?.title?.charAt(0)?.toUpperCase() || 'T'}
+              </div>
+            </div>
           </div>
         </div>
         
@@ -258,6 +304,38 @@ const TemplateDetail: React.FC = () => {
                   />
                 ) : (
                   <p className="text-gray-800 font-medium text-lg">{template.title}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">Linked Product</label>
+                {isEditing ? (
+                  <select
+                    value={editForm.product_id || ''}
+                    onChange={(e) => handleInputChange('product_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={loadingProducts}
+                  >
+                    <option value="">No product linked</option>
+                    {products.map(product => (
+                      <option key={product.id} value={product.id}>
+                        {product.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-gray-800">
+                    {template.product_id ? (
+                      products.find(p => p.id === template.product_id)?.name || 'Unknown Product'
+                    ) : (
+                      'No product linked'
+                    )}
+                  </p>
+                )}
+                {isEditing && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Link this template to a product for preview functionality
+                  </p>
                 )}
               </div>
 

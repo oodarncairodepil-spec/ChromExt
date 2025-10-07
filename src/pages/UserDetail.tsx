@@ -71,7 +71,7 @@ const UserDetail: React.FC = () => {
       
       // Fetch user's carts
       const { data: cartsData, error: cartsError } = await supabase
-        .from('carts')
+        .from('cart_items')
         .select('*')
         .eq('user_id', id)
         .order('created_at', { ascending: false })
@@ -111,9 +111,9 @@ const UserDetail: React.FC = () => {
         .update({
           name: editForm.name,
           phone: editForm.phone,
+          address: editForm.address,
           city: editForm.city,
           district: editForm.district,
-          full_address: editForm.full_address,
           note: editForm.note,
           label: editForm.label,
           updated_at: new Date().toISOString()
@@ -189,7 +189,7 @@ const UserDetail: React.FC = () => {
       
       // First delete all cart items for this user
       const { error: cartError } = await supabase
-        .from('carts')
+        .from('cart_items')
         .delete()
         .eq('user_id', user.id)
       
@@ -420,16 +420,16 @@ const UserDetail: React.FC = () => {
 
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Full Address</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Address</label>
                   {isEditing ? (
                     <textarea
-                      value={editForm.full_address || ''}
-                      onChange={(e) => handleInputChange('full_address', e.target.value)}
+                      value={editForm.address || ''}
+                      onChange={(e) => handleInputChange('address', e.target.value)}
                       rows={3}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   ) : (
-                    <p className="text-gray-800">{user.full_address}</p>
+                    <p className="text-gray-800">{user.address}</p>
                   )}
                 </div>
               </div>

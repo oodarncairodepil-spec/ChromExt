@@ -15,7 +15,9 @@ import ProductCreate from '../pages/ProductCreate'
 import UserDetail from '../pages/UserDetail'
 import UserCreate from '../pages/UserCreate'
 import TemplateDetail from '../pages/TemplateDetail'
+import TemplateCreate from '../pages/TemplateCreate'
 import Profile from '../pages/Profile'
+import PaymentMethod from '../pages/PaymentMethod'
 import Loading from '../components/Loading'
 
 export type TabType = 'home' | 'products' | 'users' | 'templates' | 'cart'
@@ -72,9 +74,11 @@ const AuthenticatedApp: React.FC = () => {
           <Route path="/users/create" element={<UserCreate />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/templates" element={<Templates />} />
+          <Route path="/templates/create" element={<TemplateCreate />} />
           <Route path="/templates/:id" element={<TemplateDetail />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/payment-method" element={<PaymentMethod />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

@@ -99,3 +99,26 @@ Desktop.ini
 # Temporary files
 *.tmp
 *.temp
+
+# Test files and documentation (non-essential for production)
+test-files/
+docs/
+
+# Backup files
+*.bak
+*.backup
+
+# Data files and test outputs
+data*.txt
+*.json.bak
+query_test.json
+product_check.json
+product_images_check.json
+
+# HTML test files
+*.test.html
+test*.html
+
+# Additional non-essential files
+selector.txt
+COMPREHENSIVE_DOCUMENTATION*.md
