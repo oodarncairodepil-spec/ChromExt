@@ -7,11 +7,13 @@
     "sidePanel",
     "activeTab",
     "tabs",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "https://*/*",
-    "https://web.whatsapp.com/*"
+    "https://web.whatsapp.com/*",
+    "http://localhost:*/*"
   ],
   "action": {
     "default_title": "Open Side Panel"

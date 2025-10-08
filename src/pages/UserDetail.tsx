@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { searchLocations, LocationSearchResult } from '../lib/shipping'
+import { LocationPicker } from '../components/LocationPicker'
+import { LocationResult } from '../hooks/useLocationSearch'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 interface User {
@@ -40,11 +41,11 @@ const UserDetail: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   
-  // Location search states
-  const [locationSearch, setLocationSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([])
-  const [showResults, setShowResults] = useState(false)
-  const [noResultsFound, setNoResultsFound] = useState(false)
+  // Location selection state
+  const [selectedLocation, setSelectedLocation] = useState<LocationResult | null>(null)
+  
+  // Allow editing for all users
+  const canEditUser = true
   
   // Label options
   const labels = ['New', 'Regular', 'VIP', 'Inactive']
@@ -92,6 +93,22 @@ const UserDetail: React.FC = () => {
   const handleEdit = () => {
     setIsEditing(true)
     setEditForm(user || {})
+    
+    // Initialize selectedLocation with existing user data
+    if (user && (user.city || user.district)) {
+      setSelectedLocation({
+        district_id: 0, // We don't have the actual IDs
+        district_name: user.district || '',
+        city_id: 0,
+        city_name: user.city || '',
+        province_id: 0,
+        province_name: '', // We don't have province data in user object
+        qtext: `${user.district || ''}, ${user.city || ''}`,
+        score: 1.0
+      })
+    } else {
+      setSelectedLocation(null)
+    }
   }
 
   const handleCancel = () => {
@@ -137,43 +154,16 @@ const UserDetail: React.FC = () => {
     setEditForm(prev => ({ ...prev, [field]: value }))
   }
 
-  // Location search functions
-  const handleLocationSearch = async (query: string) => {
-    setLocationSearch(query)
-    
-    if (query.length < 2) {
-      setSearchResults([])
-      setShowResults(false)
-      setNoResultsFound(false)
-      return
-    }
-    
-    try {
-      const results = await searchLocations(query)
-      setSearchResults(results.slice(0, 10))
-      setShowResults(results.length > 0)
-      setNoResultsFound(results.length === 0)
-    } catch (error) {
-      console.error('Error searching locations:', error)
-      setSearchResults([])
-      setShowResults(false)
-      setNoResultsFound(true)
-    }
-  }
-
-  const selectLocation = (location: LocationSearchResult) => {
-    if (location.type === 'city') {
-      handleInputChange('city', location.name)
-      handleInputChange('district', '')
+  // Location selection handler
+  const handleLocationSelect = (location: LocationResult | null) => {
+    setSelectedLocation(location)
+    if (location) {
+      handleInputChange('city', location.city_name)
+      handleInputChange('district', location.district_name)
     } else {
-      handleInputChange('city', location.city_name || '')
-      handleInputChange('district', location.name)
+      handleInputChange('city', '')
+      handleInputChange('district', '')
     }
-    
-    setLocationSearch(`${location.name}${location.city_name ? `, ${location.city_name}` : ''}${location.province_name ? `, ${location.province_name}` : ''}`)
-    setShowResults(false)
-    setNoResultsFound(false)
-    setSearchResults([])
   }
 
   const handleDelete = () => {
@@ -307,6 +297,8 @@ const UserDetail: React.FC = () => {
           {isEditing ? 'Edit User' : 'User Details'}
         </h1>
       </div>
+      
+
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* User Information */}
@@ -372,53 +364,39 @@ const UserDetail: React.FC = () => {
                 {isEditing ? (
                   <div>
                     <label className="block text-sm font-medium text-gray-600 mb-1">
-                      City & District Search
+                      City & District
                     </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={locationSearch}
-                        onChange={(e) => handleLocationSearch(e.target.value)}
-                        placeholder="Type at least 2 characters to search for city or district..."
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      
-                      {/* Search Results Dropdown */}
-                      {showResults && searchResults.length > 0 && (
-                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                          {searchResults.map((result, index) => (
-                            <div
-                              key={index}
-                              onClick={() => selectLocation(result)}
-                              className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                            >
-                              <div className="font-medium text-gray-900">
-                                {result.name}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                {result.type === 'city' ? 'City' : 'District'}
-                                {result.city_name && result.type === 'district' && ` ${result.city_name}`}
-                                {result.province_name && `, ${result.province_name}`}
-                              </div>
-                            </div>
-                          ))}
+                    <LocationPicker
+                      value={selectedLocation}
+                      onChange={handleLocationSelect}
+                      placeholder="Search for city or district..."
+                      className="w-full"
+                    />
+                    
+                    {/* Selected Location Display */}
+                    {selectedLocation && (
+                      <div className="mt-2 p-2 bg-blue-50 rounded-md">
+                        <div className="text-sm text-blue-800">
+                          <strong>Selected:</strong>
+                          {selectedLocation.district_name && ` ${selectedLocation.district_name}`}
+                          {selectedLocation.city_name && `, ${selectedLocation.city_name}`}
+                          {selectedLocation.province_name && `, ${selectedLocation.province_name}`}
                         </div>
-                      )}
-                      
-                      {/* No Results Message */}
-                      {noResultsFound && locationSearch.length >= 2 && (
-                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg">
-                          <div className="px-3 py-2 text-gray-500 text-sm">
-                            No locations found for "{locationSearch}". Try a different search term.
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                ) : null}
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-600 mb-1">City & District</label>
+                    <p className="text-gray-800">
+                      {user.district && user.city ? `${user.district}, ${user.city}` : 
+                       user.district ? user.district :
+                       user.city ? user.city : 
+                       'Not specified'}
+                    </p>
+                  </div>
+                )}
                 
-
-
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Address</label>
                   {isEditing ? (

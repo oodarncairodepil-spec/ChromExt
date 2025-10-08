@@ -105,6 +105,7 @@ const Products: React.FC = () => {
     setSuccess(null)
     try {
       // Check if item already exists in cart
+      console.log('🔍 Checking existing cart item for user:', user.id, 'product:', product.id)
       const { data: existingItem, error: checkError } = await supabase
         .from('cart_items')
         .select('*')
@@ -112,8 +113,13 @@ const Products: React.FC = () => {
         .eq('product_id', product.id)
         .single()
 
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError
+      if (checkError) {
+        console.log('🚨 Cart check error:', checkError)
+        if (checkError.code !== 'PGRST116') {
+          throw checkError
+        }
+      } else {
+        console.log('✅ Found existing cart item:', existingItem)
       }
 
       if (existingItem) {
@@ -163,6 +169,7 @@ const Products: React.FC = () => {
     try {
       // For variants, we need to check if this specific variant is already in cart
       // We'll use variant_id if the carts table supports it, otherwise use product_id with variant info
+      console.log('🔍 Checking existing variant cart item for user:', user.id, 'product:', product.id, 'variant:', variant.id)
       const { data: existingItem, error: checkError } = await supabase
         .from('cart_items')
         .select('*')
@@ -171,8 +178,13 @@ const Products: React.FC = () => {
         .eq('variant_id', variant.id)
         .single()
 
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError
+      if (checkError) {
+        console.log('🚨 Variant cart check error:', checkError)
+        if (checkError.code !== 'PGRST116') {
+          throw checkError
+        }
+      } else {
+        console.log('✅ Found existing variant cart item:', existingItem)
       }
 
       if (existingItem) {

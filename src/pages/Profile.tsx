@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { getProvinces, getCitiesByProvince, getDistrictsByCity, searchLocations, Province, City, District, LocationSearchResult } from '../lib/shipping'
+import { getProvinces, getCitiesByProvince, getDistrictsByCity, Province, City, District } from '../lib/shipping'
+import { LocationPicker } from '../components/LocationPicker'
+import { LocationResult } from '../hooks/useLocationSearch'
 import { useNavigate } from 'react-router-dom'
 import Loading from '../components/Loading'
 
@@ -36,8 +38,7 @@ const Profile: React.FC = () => {
   const [cities, setCities] = useState<City[]>([])
   const [districts, setDistricts] = useState<District[]>([])
   const [loadingLocations, setLoadingLocations] = useState(false)
-  const [locationSearch, setLocationSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([])
+  const [selectedLocation, setSelectedLocation] = useState<LocationResult | null>(null)
   const [uploading, setUploading] = useState(false)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   
@@ -206,50 +207,31 @@ const Profile: React.FC = () => {
     }))
   }
 
-  const handleLocationSearch = async (query: string) => {
-    setLocationSearch(query)
-    
-    if (query.length < 2) {
-      setSearchResults([])
-      return
-    }
-    
-    try {
-      const results = await searchLocations(query)
-      setSearchResults(results.slice(0, 10))
-    } catch (error) {
-      console.error('Error searching locations:', error)
-      setSearchResults([])
-    }
-  }
-
-  const selectLocation = (location: LocationSearchResult) => {
-    if (location.type === 'city') {
+  const handleLocationSelect = (location: LocationResult | null) => {
+    setSelectedLocation(location)
+    if (location) {
       setFormData(prev => ({
         ...prev,
-        pickup_province_id: undefined,
-        pickup_province_name: location.province_name || '',
-        pickup_city_id: location.id,
-        pickup_city_name: location.name,
-        pickup_district_id: undefined,
-        pickup_district_name: '',
-        pickup_zip_code: location.zip_code
+        pickup_province_id: location.province_id,
+        pickup_province_name: location.province_name,
+        pickup_city_id: location.city_id,
+        pickup_city_name: location.city_name,
+        pickup_district_id: location.district_id,
+        pickup_district_name: location.district_name,
+        pickup_zip_code: ''
       }))
     } else {
       setFormData(prev => ({
         ...prev,
         pickup_province_id: undefined,
-        pickup_province_name: location.province_name || '',
+        pickup_province_name: '',
         pickup_city_id: undefined,
-        pickup_city_name: location.city_name || '',
-        pickup_district_id: location.id,
-        pickup_district_name: location.name,
-        pickup_zip_code: location.zip_code
+        pickup_city_name: '',
+        pickup_district_id: undefined,
+        pickup_district_name: '',
+        pickup_zip_code: ''
       }))
     }
-    
-    setLocationSearch('')
-    setSearchResults([])
   }
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -555,49 +537,25 @@ const Profile: React.FC = () => {
               {/* Quick Location Search */}
               <div className="border-t pt-4">
                 <h3 className="text-md font-medium text-gray-900 mb-3">Quick Location Search</h3>
-                <div className="relative">
-                  <label htmlFor="location_search" className="block text-sm font-medium text-gray-700 mb-1">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Search City or District
                   </label>
-                  <input
-                    type="text"
-                    id="location_search"
-                    value={locationSearch}
-                    onChange={(e) => handleLocationSearch(e.target.value)}
-                    placeholder="Type city or district name..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  {searchResults.length > 0 && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                      {searchResults.map((result, index) => (
-                        <button
-                          key={index}
-                          onClick={() => selectLocation(result)}
-                          className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
-                        >
-                          <div className="font-medium">{result.name}</div>
-                          <div className="text-sm text-gray-500">
-                            {result.type === 'city' ? 'City' : 'District'} • {result.zip_code}
-                            {result.province_name && ` • ${result.province_name}`}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <LocationPicker
+                     value={selectedLocation}
+                     onChange={handleLocationSelect}
+                     placeholder="Type city or district name..."
+                   />
                 </div>
                 
                 {/* Selected Location Display */}
-                {(formData.pickup_city_name || formData.pickup_district_name) && (
+                {selectedLocation && (
                   <div className="mt-3 p-3 bg-blue-50 rounded-md">
                     <div className="text-sm font-medium text-blue-900">
                       Selected Location:
                     </div>
                     <div className="text-sm text-blue-700">
-                      {formData.pickup_district_name 
-                        ? `${formData.pickup_district_name} (District)`
-                        : `${formData.pickup_city_name} (City)`
-                      }
-                      {formData.pickup_province_name && `, ${formData.pickup_province_name}`}
+                      {selectedLocation.district_name}, {selectedLocation.city_name}, {selectedLocation.province_name}
                     </div>
                   </div>
                 )}

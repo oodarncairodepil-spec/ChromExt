@@ -1,4 +1,4 @@
 {
-  "permissions": ["sidePanel", "activeTab", "tabs", "scripting"],
-  "host_permissions": ["https://*/*"]
+  "permissions": ["sidePanel", "activeTab", "tabs", "scripting", "storage"],
+  "host_permissions": ["https://*/*", "https://web.whatsapp.com/*", "http://localhost:*/*"]
 }

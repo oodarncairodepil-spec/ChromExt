@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { getProvinces, getCitiesByProvince, getDistrictsByCity, calculateShippingCost, searchLocations, Province, City, District, CostCalculationParams, LocationSearchResult, ShippingCost } from '../lib/shipping'
+import { getProvinces, getCitiesByProvince, getDistrictsByCity, calculateShippingCost, Province, City, District, CostCalculationParams, ShippingCost } from '../lib/shipping'
 import Loading from '../components/Loading'
 import Dialog from '../components/Dialog'
+import LocationPicker from '../components/LocationPicker'
+import { LocationResult } from '../hooks/useLocationSearch'
 import { useAuth } from '../contexts/AuthContext'
+import { parseLocationTextEnhanced } from '../utils/locationParser'
 
 interface CartItem {
   id: string
@@ -31,6 +34,7 @@ interface ShippingDestination {
   city_name?: string
   district_id?: number
   district_name?: string
+  location_result?: LocationResult
 }
 
 interface Buyer {
@@ -56,6 +60,43 @@ interface PaymentMethod {
   updated_at: string
 }
 
+interface Courier {
+  id: string
+  code: string
+  name: string
+  type: string
+  has_cod: boolean
+  has_insurance: boolean
+  min_weight: number
+  min_cost: number
+  has_pickup: boolean
+  cutoff_time?: string
+  is_active: boolean
+}
+
+interface CourierService {
+  id: string
+  courier_id: string
+  service_name: string
+  service_code?: string
+  description?: string
+  is_active: boolean
+}
+
+interface CourierPreference {
+  id: string
+  user_id: string
+  courier_id: string
+  is_enabled: boolean
+}
+
+interface ServicePreference {
+  id: string
+  user_id: string
+  service_id: string
+  is_enabled: boolean
+}
+
 const Cart: React.FC = () => {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -71,8 +112,6 @@ const Cart: React.FC = () => {
   const [shippingCosts, setShippingCosts] = useState<ShippingCost[]>([])
   const [selectedShipping, setSelectedShipping] = useState<ShippingCost | null>(null)
   const [loadingShipping, setLoadingShipping] = useState(false)
-  const [locationSearch, setLocationSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([])
   
   // Buyer search state
   const [selectedBuyer, setSelectedBuyer] = useState<Buyer | null>(null)
@@ -86,11 +125,37 @@ const Cart: React.FC = () => {
   const [manualBuyerName, setManualBuyerName] = useState('')
   const [manualBuyerAddress, setManualBuyerAddress] = useState('')
   const [manualBuyerCityDistrict, setManualBuyerCityDistrict] = useState('')
+  const [selectedBuyerLocation, setSelectedBuyerLocation] = useState<LocationResult | null>(null)
   
   // Payment method state
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null)
   const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(false)
+  
+  // Courier and service preference state
+  const [couriers, setCouriers] = useState<Courier[]>([])
+  const [courierServices, setCourierServices] = useState<CourierService[]>([])
+  const [courierPreferences, setCourierPreferences] = useState<CourierPreference[]>([])
+  const [servicePreferences, setServicePreferences] = useState<ServicePreference[]>([])
+  const [loadingCouriers, setLoadingCouriers] = useState(false)
+  
+  // 2-phase courier selection state
+  const [selectedCourier, setSelectedCourier] = useState<Courier | null>(null)
+  const [selectedService, setSelectedService] = useState<CourierService | null>(null)
+  
+  // Shipping fee state
+  const [shippingFee, setShippingFee] = useState<number>(0)
+  const [shippingFeeDisplay, setShippingFeeDisplay] = useState<string>('0')
+  
+  // Helper function to format number with thousand separator
+  const formatNumber = (num: number): string => {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  }
+  
+  // Helper function to parse formatted number
+  const parseFormattedNumber = (str: string): number => {
+    return parseInt(str.replace(/,/g, '')) || 0
+  }
   
   // Discount state
   const [discountType, setDiscountType] = useState<'percentage' | 'nominal'>('percentage')
@@ -106,10 +171,19 @@ const Cart: React.FC = () => {
 
   const [isDetecting, setIsDetecting] = useState(false)
 
+  // Generate order number
+  const generateOrderNumber = () => {
+    const now = new Date()
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '') // YYYYMMDD
+    const timeStr = now.getTime().toString().slice(-4) // Last 4 digits of timestamp
+    return `ORD-${dateStr}-${timeStr}`
+  }
+
   useEffect(() => {
     loadCartItems()
     loadProvinces()
     loadPaymentMethods()
+    loadCourierData()
     loadPersistedData()
   }, [])
 
@@ -118,7 +192,7 @@ const Cart: React.FC = () => {
     if (user) {
       saveCartData()
     }
-  }, [manualBuyerPhone, manualBuyerName, manualBuyerAddress, manualBuyerCityDistrict, shippingDestination, selectedShipping, discountType, discountValue, locationSearch, user])
+  }, [manualBuyerPhone, manualBuyerName, manualBuyerAddress, manualBuyerCityDistrict, selectedBuyerLocation, shippingDestination, selectedShipping, discountType, discountValue, selectedBuyer, buyerSearch, user])
 
   // Check for existing draft when buyer phone changes
   useEffect(() => {
@@ -129,6 +203,20 @@ const Cart: React.FC = () => {
     }
   }, [manualBuyerPhone, user])
 
+  // Debug checkout button state
+  useEffect(() => {
+    console.log('=== CHECKOUT BUTTON DEBUG ===')
+    console.log('selectedPaymentMethod:', selectedPaymentMethod)
+    console.log('selectedCourier:', selectedCourier)
+    console.log('selectedService:', selectedService)
+    console.log('manualBuyerPhone:', manualBuyerPhone)
+    console.log('manualBuyerName:', manualBuyerName)
+    console.log('manualBuyerAddress:', manualBuyerAddress)
+    console.log('manualBuyerCityDistrict:', manualBuyerCityDistrict)
+    console.log('selectedBuyerLocation:', selectedBuyerLocation)
+    console.log('=== END DEBUG ===')
+  }, [selectedPaymentMethod, selectedCourier, selectedService, manualBuyerPhone, manualBuyerName, manualBuyerAddress, manualBuyerCityDistrict, selectedBuyerLocation])
+
   // Save cart form data to localStorage
   const saveCartData = () => {
     if (!user) return
@@ -138,11 +226,14 @@ const Cart: React.FC = () => {
       manualBuyerName,
       manualBuyerAddress,
       manualBuyerCityDistrict,
+      selectedBuyerLocation,
       shippingDestination,
       selectedShipping,
       discountType,
       discountValue,
-      locationSearch
+      selectedBuyer,
+      buyerSearch,
+      // locationSearch removed - using LocationPicker now
     }
     
     localStorage.setItem(`cart_data_${user.id}`, JSON.stringify(cartData))
@@ -161,11 +252,14 @@ const Cart: React.FC = () => {
         setManualBuyerName(cartData.manualBuyerName || '')
         setManualBuyerAddress(cartData.manualBuyerAddress || '')
         setManualBuyerCityDistrict(cartData.manualBuyerCityDistrict || '')
+        setSelectedBuyerLocation(cartData.selectedBuyerLocation || null)
         setShippingDestination(cartData.shippingDestination || {})
         setSelectedShipping(cartData.selectedShipping || null)
         setDiscountType(cartData.discountType || 'percentage')
         setDiscountValue(cartData.discountValue || 0)
-        setLocationSearch(cartData.locationSearch || '')
+        setSelectedBuyer(cartData.selectedBuyer || null)
+        setBuyerSearch(cartData.buyerSearch || '')
+        // locationSearch removed - using LocationPicker now
         
         // If shipping destination exists, recalculate shipping costs
         if (cartData.shippingDestination?.district_id) {
@@ -192,46 +286,22 @@ const Cart: React.FC = () => {
     if (!user) return
     
     try {
-      // Try to find the most recent buyer from cart history
-      const { data: recentCarts, error } = await supabase
-        .from('cart_items')
-        .select(`
-          user_id,
-          users!inner(
-            id, name, phone, address, city, district, full_address, note, label
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-      
-      if (error) {
-        console.log('No recent buyer found from cart history')
-        return
-      }
-      
-      if (recentCarts && recentCarts.length > 0) {
-         const cartData = recentCarts[0]
-         const recentBuyer = cartData.users as unknown as Buyer
-         if (recentBuyer) {
-           setSelectedBuyer(recentBuyer)
-           setBuyerSearch(recentBuyer.name)
-           
-           // Auto-populate shipping if buyer has location info
-           if (recentBuyer.city || recentBuyer.district) {
-             handleLocationSearch(recentBuyer.district || recentBuyer.city)
-           }
-         }
-       }
+      // Note: Removed auto-detection from cart history as it requires a separate buyers table
+      // Users can manually search and select buyers
+      console.log('Manual buyer selection required')
     } catch (error) {
       console.log('Auto-detection failed, user can search manually')
     }
   }
 
   const checkExistingDraft = async (customerPhone?: string) => {
-    if (!user || !customerPhone) return
+    if (!user || !customerPhone) {
+      console.log('🔍 No user or customer phone, skipping draft check')
+      return
+    }
     
     try {
+      console.log('🔍 Checking existing draft for customer:', customerPhone, 'seller:', user.id)
       const { data: existingDraft, error } = await supabase
         .from('orders')
         .select('id')
@@ -242,13 +312,19 @@ const Cart: React.FC = () => {
         .limit(1)
         .single()
       
+      if (error) {
+        console.log('🚨 Draft check query error:', error)
+      }
+      
       if (existingDraft && !error) {
+        console.log('✅ Found existing draft:', existingDraft.id)
         setExistingDraftId(existingDraft.id)
       } else {
+        console.log('ℹ️ No existing draft found')
         setExistingDraftId(null)
       }
     } catch (error) {
-      console.log('No existing draft found for customer:', customerPhone)
+      console.log('No existing draft found for customer:', customerPhone, 'Error:', error)
       setExistingDraftId(null)
     }
   }
@@ -259,10 +335,12 @@ const Cart: React.FC = () => {
       setError(null)
       
       if (!user) {
+        console.log('🔍 No user found, clearing cart items')
         setCartItems([])
         return
       }
 
+      console.log('🔍 Loading cart items for user:', user.id)
       const { data: cartsData, error: cartsError } = await supabase
         .from('cart_items')
         .select(`
@@ -277,8 +355,12 @@ const Cart: React.FC = () => {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
       
-      if (cartsError) throw cartsError
+      if (cartsError) {
+        console.error('🚨 Cart items query error:', cartsError)
+        throw cartsError
+      }
       
+      console.log('✅ Cart items loaded successfully:', cartsData?.length || 0, 'items')
       setCartItems(cartsData || [])
     } catch (err) {
       setError('Failed to load cart items')
@@ -346,7 +428,12 @@ const Cart: React.FC = () => {
   }
 
   const handleSaveDraft = async () => {
+    console.log('=== SAVE DRAFT CLICKED ===');
+    console.log('user:', user);
+    console.log('manualBuyerPhone:', manualBuyerPhone);
+    
     if (!user || !manualBuyerPhone.trim()) {
+      console.log('VALIDATION FAILED: Missing user or phone');
       alert('Phone number is required to save draft')
       return
     }
@@ -388,14 +475,37 @@ const Cart: React.FC = () => {
       }
       
       // Save order draft
+      const generatedOrderNumber = existingDraftId ? null : generateOrderNumber()
+      console.log('=== SAVE DRAFT DEBUG ===');
+      console.log('existingDraftId:', existingDraftId);
+      console.log('generatedOrderNumber:', generatedOrderNumber);
+      console.log('buyerId:', buyerId);
+      
+      // Parse location text if LocationPicker wasn't used
+      let cityId = selectedBuyerLocation?.city_id || null
+      let districtId = selectedBuyerLocation?.district_id || null
+      
+      if (!selectedBuyerLocation && manualBuyerCityDistrict.trim()) {
+        console.log('=== PARSING MANUAL LOCATION TEXT ===');
+        console.log('manualBuyerCityDistrict:', manualBuyerCityDistrict);
+        
+        const parsedLocation = await parseLocationTextEnhanced(manualBuyerCityDistrict.trim())
+        console.log('parsedLocation:', parsedLocation);
+        
+        cityId = parsedLocation.city_id
+        districtId = parsedLocation.district_id
+      }
+      
       const orderData = {
         seller_id: user.id,
         buyer_id: buyerId,
+        order_number: existingDraftId ? undefined : generatedOrderNumber, // Let DB trigger generate for new drafts
         items: cartItems,
         shipping_info: {
           destination: shippingDestination,
-          method: selectedShipping,
-          cost: selectedShipping?.cost || 0
+          courier: selectedCourier,
+          service: selectedService,
+          cost: 0
         },
         payment_method_id: selectedPaymentMethod?.id,
         discount: {
@@ -405,79 +515,166 @@ const Cart: React.FC = () => {
         },
         subtotal: subtotalAmount,
         total: totalAmount,
+        shipping_fee: shippingFee,
         status: 'draft',
         customer_name: manualBuyerName.trim() || 'Unknown',
         customer_address: manualBuyerAddress.trim() || '',
         customer_phone: manualBuyerPhone.trim(),
-        customer_city: manualBuyerCityDistrict.trim() || '',
+        customer_city: cityId || manualBuyerCityDistrict.trim() || '',
+        customer_district: districtId || '',
         total_amount: totalAmount
       }
       
+      console.log('=== COMPLETE ORDER DATA ===');
+      console.log('orderData:', JSON.stringify(orderData, null, 2));
+      
       let orderError
       if (existingDraftId) {
+        console.log('UPDATING existing draft with ID:', existingDraftId);
         // Update existing draft
-        const { error } = await supabase
+        const { data: updatedOrder, error } = await supabase
           .from('orders')
           .update(orderData)
           .eq('id', existingDraftId)
+          .select('id, order_number')
+          .single()
         orderError = error
+        console.log('UPDATE result - data:', updatedOrder, 'error:', error);
+        if (updatedOrder && !error) {
+          console.log('Draft updated with order_number:', updatedOrder.order_number);
+        }
       } else {
+        console.log('CREATING new draft');
+        console.log('Insert data:', JSON.stringify(orderData, null, 2));
         // Create new draft
         const { data: newOrder, error } = await supabase
           .from('orders')
           .insert(orderData)
-          .select('id')
+          .select('id, order_number')
           .single()
         
+        console.log('INSERT result - data:', newOrder, 'error:', error);
+        
         if (newOrder && !error) {
+          console.log('New draft created with ID:', newOrder.id, 'order_number:', newOrder.order_number);
           setExistingDraftId(newOrder.id)
         }
         orderError = error
       }
       
       if (orderError) {
+        console.error('=== DATABASE ERROR ===');
         console.error('Error saving draft:', orderError)
+        console.error('Error details:', JSON.stringify(orderError, null, 2));
         alert('Error saving order draft')
         return
       }
       
+      console.log('=== DRAFT SAVED SUCCESSFULLY ===');
       setShowSuccessDialog(true)
       
     } catch (error) {
+      console.error('=== CATCH ERROR ===');
       console.error('Error saving draft:', error)
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
       alert('Error saving order draft')
     }
   }
 
   const handleCheckout = async () => {
-    if (!user || !selectedPaymentMethod || !selectedShipping || !manualBuyerPhone.trim()) {
-      alert('Please complete all required fields')
+    // Validate all mandatory fields
+    if (!user || !selectedPaymentMethod || !selectedCourier || !selectedService || 
+        !manualBuyerPhone.trim() || !manualBuyerName.trim() || 
+        !manualBuyerAddress.trim() || !manualBuyerCityDistrict.trim()) {
+      alert('Please complete all required fields: buyer information (phone, name, address, city & district), courier service, and payment method')
       return
     }
 
     try {
-      // If there's an existing draft, update its status to 'pending' or 'confirmed'
-      if (existingDraftId) {
-        const { error } = await supabase
-          .from('orders')
-          .update({ status: 'pending' })
-          .eq('id', existingDraftId)
+      // Calculate totals
+      const subtotal = cartItems.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0)
+      const shippingCost = 0 // Using shipping fee instead of calculated shipping cost
+      let discountAmount = 0
+      
+      if (discountType === 'percentage' && discountValue > 0) {
+         discountAmount = (subtotal * discountValue) / 100
+       } else if (discountType === 'nominal' && discountValue > 0) {
+         discountAmount = discountValue
+       }
+      
+      const total = subtotal + shippingCost + shippingFee - discountAmount
+
+      // Create new order with 'New' status
+      const generatedOrderNumber = generateOrderNumber()
+      console.log('=== CHECKOUT DEBUG ===');
+      console.log('generatedOrderNumber:', generatedOrderNumber);
+      
+      // Parse location text if LocationPicker wasn't used
+      let cityId = selectedBuyerLocation?.city_id || null
+      let districtId = selectedBuyerLocation?.district_id || null
+      
+      if (!selectedBuyerLocation && manualBuyerCityDistrict.trim()) {
+        console.log('=== PARSING MANUAL LOCATION TEXT (CHECKOUT) ===');
+        console.log('manualBuyerCityDistrict:', manualBuyerCityDistrict);
         
-        if (error) {
-          console.error('Error updating order status:', error)
-          alert('Error processing checkout')
-          return
-        }
+        const parsedLocation = await parseLocationTextEnhanced(manualBuyerCityDistrict.trim())
+        console.log('parsedLocation:', parsedLocation);
+        
+        cityId = parsedLocation.city_id
+        districtId = parsedLocation.district_id
       }
       
-      // Clear the existing draft ID so future drafts create new orders
-      setExistingDraftId(null)
+      const orderData = {
+        seller_id: user.id, // Changed from user_id to seller_id to match schema
+        order_number: generatedOrderNumber,
+        customer_phone: manualBuyerPhone.trim(),
+        customer_name: manualBuyerName.trim(),
+        customer_address: manualBuyerAddress.trim(),
+        customer_city: cityId || manualBuyerCityDistrict.trim(),
+        customer_district: districtId || '',
+        subtotal: subtotal,
+        shipping_fee: shippingFee,
+        discount: {
+          type: discountType,
+          value: discountValue,
+          amount: discountAmount
+        },
+        total: total,
+        payment_method_id: selectedPaymentMethod.id,
+        shipping_info: {
+          destination: shippingDestination,
+          courier: selectedCourier,
+          service: selectedService,
+          cost: shippingCost
+        },
+        status: 'New',
+        items: cartItems.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+          product_name: item.product?.name || 'Unknown Product'
+        })),
+        total_amount: total
+      }
+
+      const { data: newOrder, error } = await supabase
+        .from('orders')
+        .insert([orderData])
+        .select()
+        .single()
+      
+      if (error) {
+        console.error('Error creating order:', error)
+        alert('Error creating order')
+        return
+      }
       
       // Clear the cart and persisted data
-       await clearCart()
-       clearPersistedData()
+      await clearCart()
+      clearPersistedData()
+      setExistingDraftId(null)
        
-       alert('Order placed successfully!')
+      alert('Order placed successfully!')
       
     } catch (error) {
       console.error('Error during checkout:', error)
@@ -628,8 +825,14 @@ const Cart: React.FC = () => {
         // Set shipping information
         if (draftOrder.shipping_info) {
           setShippingDestination(draftOrder.shipping_info.destination || {})
-          setSelectedShipping(draftOrder.shipping_info.method || null)
+          setSelectedCourier(draftOrder.shipping_info.courier || null)
+          setSelectedService(draftOrder.shipping_info.service || null)
         }
+        
+        // Set shipping fee
+        const loadedShippingFee = draftOrder.shipping_fee || 0
+        setShippingFee(loadedShippingFee)
+        setShippingFeeDisplay(formatNumber(loadedShippingFee))
         
         // Set discount information
         if (draftOrder.discount) {
@@ -676,52 +879,9 @@ const Cart: React.FC = () => {
     }
   }
 
-  const handleLocationSearch = async (searchTerm: string) => {
-    setLocationSearch(searchTerm)
-    
-    if (searchTerm.length < 2) {
-      setSearchResults([])
-      return
-    }
-    
-    try {
-      const results = await searchLocations(searchTerm)
-      setSearchResults(results.slice(0, 10)) // Limit results
-    } catch (error) {
-      console.error('Error searching locations:', error)
-      setSearchResults([])
-    }
-  }
+  // handleLocationSearch removed - using LocationPicker now
 
-  const selectLocation = async (location: LocationSearchResult) => {
-    if (location.type === 'city') {
-      setShippingDestination({
-        province_id: undefined,
-        province_name: location.province_name,
-        city_id: location.id,
-        city_name: location.name,
-        district_id: undefined,
-        district_name: undefined
-      })
-    } else {
-      setShippingDestination({
-        province_id: undefined,
-        province_name: location.province_name,
-        city_id: undefined,
-        city_name: location.city_name,
-        district_id: location.id,
-        district_name: location.name
-      })
-    }
-    
-    setLocationSearch('')
-    setSearchResults([])
-    
-    // Calculate shipping costs
-    if (totalAmount > 0) {
-      await calculateShipping(location.id)
-    }
-  }
+  // selectLocation removed - using LocationPicker now
 
   const calculateShipping = async (destinationId: number) => {
     try {
@@ -731,10 +891,15 @@ const Cart: React.FC = () => {
       const origin = 501 // Jakarta Pusat as default
       const weight = Math.max(1000, totalItems * 500) // Minimum 1kg, or 500g per item
       
+      // Get enabled couriers based on user preferences
+      const enabledCouriers = getEnabledCouriers()
+      const courierString = enabledCouriers.length > 0 ? enabledCouriers.join(':') : 'jne:pos:tiki'
+      
       const params: CostCalculationParams = {
         origin,
         destination: destinationId,
-        weight
+        weight,
+        courier: courierString
       }
       
       const costs = await calculateShippingCost(params)
@@ -793,10 +958,39 @@ const Cart: React.FC = () => {
     setManualBuyerAddress(buyer.address)
     setManualBuyerCityDistrict(`${buyer.district}, ${buyer.city}`)
     
-    // Auto-populate shipping destination if buyer has city/district info
-    if (buyer.city || buyer.district) {
-      // Try to find matching location for shipping calculation
-      handleLocationSearch(buyer.district || buyer.city)
+    // Clear location picker when selecting a buyer
+    setSelectedBuyerLocation(null)
+    
+    // Auto-populate shipping destination if buyer has city/district info - removed handleLocationSearch
+  }
+
+  // Handle location picker selection
+  const handleBuyerLocationSelect = (location: LocationResult | null) => {
+    setSelectedBuyerLocation(location)
+    if (location) {
+      // Update the text field with the selected location
+      setManualBuyerCityDistrict(`${location.district_name}, ${location.city_name}`)
+      
+      // Update shipping destination for shipping cost calculation
+      setShippingDestination({
+        province_id: location.province_id,
+        province_name: location.province_name,
+        city_id: location.city_id,
+        city_name: location.city_name,
+        district_id: location.district_id,
+        district_name: location.district_name,
+        location_result: location
+      })
+      
+      // Calculate shipping costs if district is selected
+      if (location.district_id) {
+        calculateShipping(location.district_id)
+      }
+    } else {
+      // Clear shipping destination when location is cleared
+      setShippingDestination({})
+      setShippingCosts([])
+      setSelectedShipping(null)
     }
   }
 
@@ -811,6 +1005,7 @@ const Cart: React.FC = () => {
     setManualBuyerName('')
     setManualBuyerAddress('')
     setManualBuyerCityDistrict('')
+    setSelectedBuyerLocation(null)
   }
 
   // Payment method functions
@@ -843,6 +1038,181 @@ const Cart: React.FC = () => {
     } finally {
       setLoadingPaymentMethods(false)
     }
+  }
+
+  const loadCourierData = async () => {
+    if (!user) return
+    
+    setLoadingCouriers(true)
+    try {
+      // Try to load couriers from database
+      const { data: couriersData, error: couriersError } = await supabase
+        .from('shipping_couriers')
+        .select('*')
+        .eq('is_active', true)
+        .order('name')
+      
+      if (couriersError) {
+        console.log('Database tables not found, using fallback courier data')
+        // Fallback to hardcoded courier data
+        const fallbackCouriers = [
+          { id: 'jne', code: 'jne', name: 'JNE', type: 'Regular', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true },
+          { id: 'pos', code: 'pos', name: 'POS Indonesia', type: 'Regular', has_cod: false, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: false, is_active: true },
+          { id: 'tiki', code: 'tiki', name: 'TIKI', type: 'Regular', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true },
+          { id: 'sicepat', code: 'sicepat', name: 'SiCepat', type: 'Express', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true },
+          { id: 'jnt', code: 'jnt', name: 'J&T Express', type: 'Express', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true },
+          { id: 'anteraja', code: 'anteraja', name: 'AnterAja', type: 'Express', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true }
+        ]
+        setCouriers(fallbackCouriers)
+        setCourierServices([])
+        setCourierPreferences([])
+        setServicePreferences([])
+        return
+      }
+      
+      setCouriers(couriersData || [])
+      
+      // Load courier services
+      const { data: servicesData, error: servicesError } = await supabase
+        .from('courier_services')
+        .select('*')
+        .eq('is_active', true)
+        .order('service_name')
+      
+      if (servicesError) {
+        console.log('Courier services table not found, skipping')
+        setCourierServices([])
+      } else {
+        setCourierServices(servicesData || [])
+      }
+      
+      // Load user courier preferences
+      const { data: courierPrefsData, error: courierPrefsError } = await supabase
+        .from('user_courier_preferences')
+        .select('*')
+        .eq('user_id', user.id)
+      
+      if (courierPrefsError) {
+        console.log('User courier preferences table not found, skipping')
+        setCourierPreferences([])
+      } else {
+        setCourierPreferences(courierPrefsData || [])
+      }
+      
+      // Load user service preferences
+      const { data: servicePrefsData, error: servicePrefsError } = await supabase
+        .from('user_service_preferences')
+        .select('*')
+        .eq('user_id', user.id)
+      
+      if (servicePrefsError) {
+        console.log('User service preferences table not found, skipping')
+        setServicePreferences([])
+      } else {
+        setServicePreferences(servicePrefsData || [])
+      }
+      
+    } catch (error) {
+      console.error('Error loading courier data:', error)
+      // Fallback to hardcoded courier data on any error
+      const fallbackCouriers = [
+        { id: 'jne', code: 'jne', name: 'JNE', type: 'Regular', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true },
+        { id: 'pos', code: 'pos', name: 'POS Indonesia', type: 'Regular', has_cod: false, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: false, is_active: true },
+        { id: 'tiki', code: 'tiki', name: 'TIKI', type: 'Regular', has_cod: true, has_insurance: true, min_weight: 1, min_cost: 0, has_pickup: true, is_active: true }
+      ]
+      setCouriers(fallbackCouriers)
+      setCourierServices([])
+      setCourierPreferences([])
+      setServicePreferences([])
+    } finally {
+      setLoadingCouriers(false)
+    }
+  }
+
+  // Handle courier selection (Phase 1)
+  const handleCourierSelection = (courier: Courier) => {
+    setSelectedCourier(courier)
+    setSelectedService(null) // Reset service selection when courier changes
+  }
+
+  // Handle service selection (Phase 2)
+  const handleServiceSelection = (service: CourierService) => {
+    setSelectedService(service)
+  }
+
+  // Get available services for selected courier
+  const getAvailableServices = (): CourierService[] => {
+    if (!selectedCourier) return []
+    return courierServices.filter(service => 
+      service.courier_id === selectedCourier.id && service.is_active
+    )
+  }
+
+  // Toggle courier preference
+  const toggleCourierPreference = async (courierId: string, isEnabled: boolean) => {
+    if (!user) return
+    
+    try {
+      const existingPreference = courierPreferences.find(p => p.courier_id === courierId)
+      
+      if (existingPreference) {
+        // Update existing preference
+        const { error } = await supabase
+          .from('user_courier_preferences')
+          .update({ is_enabled: isEnabled })
+          .eq('id', existingPreference.id)
+        
+        if (error) throw error
+        
+        // Update local state
+        setCourierPreferences(prev => 
+          prev.map(p => 
+            p.id === existingPreference.id 
+              ? { ...p, is_enabled: isEnabled }
+              : p
+          )
+        )
+      } else {
+        // Create new preference
+        const { data, error } = await supabase
+          .from('user_courier_preferences')
+          .insert({
+            user_id: user.id,
+            courier_id: courierId,
+            is_enabled: isEnabled
+          })
+          .select()
+          .single()
+        
+        if (error) throw error
+        
+        // Add to local state
+        setCourierPreferences(prev => [...prev, data])
+      }
+      
+      // Recalculate shipping if destination is selected
+      if (shippingDestination?.city_id || shippingDestination?.district_id) {
+        const destinationId = shippingDestination.district_id || shippingDestination.city_id
+        if (destinationId) {
+          calculateShipping(destinationId)
+        }
+      }
+    } catch (error) {
+      console.error('Error updating courier preference:', error)
+    }
+  }
+
+  // Get enabled couriers based on user preferences
+  const getEnabledCouriers = () => {
+    // If a courier is selected, use only that courier
+    if (selectedCourier) {
+      return [selectedCourier.code]
+    }
+    
+    // If no courier selected, return all active couriers as fallback
+    return couriers
+      .filter(courier => courier.is_active)
+      .map(courier => courier.code)
   }
 
   const subtotalAmount = cartItems.reduce((sum, item) => {
@@ -1066,6 +1436,9 @@ const Cart: React.FC = () => {
           </div>
         </div>
 
+        {/* Editing Restriction Message */}
+
+
         {/* Manual Buyer Input Fields */}
         <div className="mb-4 space-y-3">
           <div>
@@ -1077,7 +1450,10 @@ const Cart: React.FC = () => {
               value={manualBuyerPhone}
               onChange={(e) => setManualBuyerPhone(e.target.value)}
               placeholder="Enter phone number"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={selectedBuyer !== null}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                selectedBuyer !== null ? 'bg-gray-100 cursor-not-allowed' : ''
+              }`}
             />
           </div>
           
@@ -1090,7 +1466,10 @@ const Cart: React.FC = () => {
               value={manualBuyerName}
               onChange={(e) => setManualBuyerName(e.target.value)}
               placeholder="Enter full name"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={selectedBuyer !== null}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                selectedBuyer !== null ? 'bg-gray-100 cursor-not-allowed' : ''
+              }`}
             />
           </div>
           
@@ -1103,7 +1482,10 @@ const Cart: React.FC = () => {
               onChange={(e) => setManualBuyerAddress(e.target.value)}
               placeholder="Enter complete address"
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              disabled={selectedBuyer !== null}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${
+                selectedBuyer !== null ? 'bg-gray-100 cursor-not-allowed' : ''
+              }`}
             />
           </div>
           
@@ -1111,13 +1493,29 @@ const Cart: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               User City & District
             </label>
-            <input
-              type="text"
-              value={manualBuyerCityDistrict}
-              onChange={(e) => setManualBuyerCityDistrict(e.target.value)}
-              placeholder="Enter city and district"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+            {selectedBuyer !== null ? (
+              <input
+                type="text"
+                value={manualBuyerCityDistrict}
+                onChange={(e) => setManualBuyerCityDistrict(e.target.value)}
+                placeholder="Enter city and district"
+                disabled={true}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 cursor-not-allowed"
+              />
+            ) : (
+              <div className="space-y-2">
+                <LocationPicker
+                  onChange={handleBuyerLocationSelect}
+                  value={selectedBuyerLocation}
+                  placeholder="Search for city and district..."
+                />
+                {selectedBuyerLocation && (
+                  <div className="text-sm text-gray-600">
+                    Selected: {selectedBuyerLocation.district_name}, {selectedBuyerLocation.city_name}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1128,37 +1526,105 @@ const Cart: React.FC = () => {
       <div className="card p-4">
         <h3 className="font-medium text-gray-900 mb-3">Shipping Information</h3>
         
-        {/* Location Search */}
-        <div className="mb-4">
+        {/* Phase 1: Courier Selection */}
+        <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Delivery Location
+            Select Courier
           </label>
-          <div className="relative">
-            <input
-              type="text"
-              value={locationSearch}
-              onChange={(e) => handleLocationSearch(e.target.value)}
-              placeholder="Search city or district..."
+          {loadingCouriers ? (
+            <div className="flex items-center py-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <span className="ml-2 text-sm text-gray-600">Loading couriers...</span>
+            </div>
+          ) : (
+            <select
+              value={selectedCourier?.id || ''}
+              onChange={(e) => {
+                const courier = couriers.find(c => c.id === e.target.value)
+                if (courier) {
+                  handleCourierSelection(courier)
+                } else {
+                  setSelectedCourier(null)
+                  setSelectedService(null)
+                }
+              }}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            {searchResults.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                {searchResults.map((result, index) => (
-                  <button
-                    key={index}
-                    onClick={() => selectLocation(result)}
-                    className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
-                  >
-                    <div className="font-medium">{result.name}</div>
-                    <div className="text-sm text-gray-500">
-                      {result.type === 'city' ? 'City' : 'District'} • {result.zip_code}
-                    </div>
-                  </button>
-                ))}
+            >
+              <option value="">Choose a courier...</option>
+              {couriers.filter(courier => courier.is_active).map((courier) => (
+                <option key={courier.id} value={courier.id}>
+                  {courier.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {couriers.length === 0 && !loadingCouriers && (
+            <div className="text-sm text-gray-500 mt-1">
+              No active couriers available
+            </div>
+          )}
+        </div>
+
+        {/* Phase 2: Service Selection */}
+        {selectedCourier && (
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Service for {selectedCourier.name}
+            </label>
+            <select
+              value={selectedService?.id || ''}
+              onChange={(e) => {
+                const service = getAvailableServices().find(s => s.id === e.target.value)
+                if (service) {
+                  handleServiceSelection(service)
+                } else {
+                  setSelectedService(null)
+                }
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="">Choose a service...</option>
+              {getAvailableServices().map((service) => (
+                <option key={service.id} value={service.id}>
+                  {service.service_name}
+                  {service.description && ` - ${service.description}`}
+                </option>
+              ))}
+            </select>
+            {getAvailableServices().length === 0 && (
+              <div className="text-sm text-gray-500 mt-1">
+                No active services available for {selectedCourier.name}
               </div>
             )}
           </div>
-        </div>
+        )}
+        
+        {/* Shipping Fee Input */}
+        {selectedService && (
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Shipping Fee
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">Rp</span>
+              <input
+                type="text"
+                value={shippingFeeDisplay}
+                onChange={(e) => {
+                  const value = e.target.value.replace(/[^0-9,]/g, '')
+                  const numericValue = parseFormattedNumber(value)
+                  setShippingFee(numericValue)
+                  setShippingFeeDisplay(formatNumber(numericValue))
+                }}
+                placeholder="0"
+                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              Enter any additional shipping charges (e.g., packaging, handling fees)
+            </div>
+          </div>
+        )}
 
         {/* Selected Location */}
         {shippingDestination && (shippingDestination.city_name || shippingDestination.district_name) && (
@@ -1381,19 +1847,27 @@ const Cart: React.FC = () => {
           <button 
             onClick={handleCheckout}
             className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-              selectedPaymentMethod && selectedShipping && manualBuyerPhone.trim()
+              selectedPaymentMethod && selectedCourier && selectedService && manualBuyerPhone.trim() && manualBuyerName.trim() && manualBuyerAddress.trim() && manualBuyerCityDistrict.trim()
                 ? 'bg-blue-600 text-white hover:bg-blue-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
-            disabled={!selectedPaymentMethod || !selectedShipping || !manualBuyerPhone.trim()}
+            disabled={!selectedPaymentMethod || !selectedCourier || !selectedService || !manualBuyerPhone.trim() || !manualBuyerName.trim() || !manualBuyerAddress.trim() || !manualBuyerCityDistrict.trim()}
           >
             {!selectedPaymentMethod 
               ? 'Select Payment Method' 
-              : !selectedShipping 
-                ? 'Select Shipping Method' 
-                : !manualBuyerPhone.trim()
-                  ? 'Enter Phone Number'
-                  : 'Proceed to Checkout'
+              : !selectedCourier 
+                ? 'Select Courier' 
+                : !selectedService
+                  ? 'Select Courier Service'
+                  : !manualBuyerPhone.trim()
+                    ? 'Enter Phone Number'
+                    : !manualBuyerName.trim()
+                      ? 'Enter Name'
+                      : !manualBuyerAddress.trim()
+                        ? 'Enter Address'
+                        : !manualBuyerCityDistrict.trim()
+                          ? 'Enter City & District'
+                          : 'Checkout'
             }
           </button>
           <button 

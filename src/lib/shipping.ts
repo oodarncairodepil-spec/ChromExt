@@ -1,13 +1,10 @@
-// RajaOngkir API integration service
+// Location search service using EMSIFA data via Supabase
+// Location search service using EMSIFA data via Supabase
+// Local Indonesian location database implementation
 
-const RAJAONGKIR_BASE_URL = 'https://rajaongkir.komerce.id/api/v1';
-const API_KEY = process.env.PLASMO_PUBLIC_RAJAONGKIR_API_KEY;
+import { supabase } from './supabase';
 
-if (!API_KEY) {
-  throw new Error('RajaOngkir API key is not configured');
-}
-
-// Types for RajaOngkir API responses
+// Types for Indonesian location data
 export interface Province {
   id: number;
   name: string;
@@ -44,120 +41,90 @@ export interface ApiResponse<T> {
   data: T;
 }
 
-// Base fetch function with API key
-const fetchWithAuth = async (url: string, options?: RequestInit, retries = 3): Promise<Response> => {
-  const defaultHeaders = {
-    'key': API_KEY!,
-    'Content-Type': 'application/json',
-  };
-  
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          ...defaultHeaders,
-          ...options?.headers,
-        },
-      });
-      
-      // If rate limited (429), wait and retry
-      if (response.status === 429 && attempt < retries) {
-        const waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
-        console.log(`⏳ Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${retries}`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-        continue;
-      }
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      return response;
-    } catch (error) {
-      if (attempt === retries) {
-        throw error;
-      }
-      // Wait before retrying on network errors
-      const waitTime = Math.pow(2, attempt) * 1000;
-      console.log(`🔄 Network error, retrying in ${waitTime}ms (${attempt + 1}/${retries})`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
-  
-  throw new Error('Max retries exceeded');
-};
+// Note: Now using EMSIFA data via Supabase for Indonesian locations
 
-// Get all provinces
+// Get all provinces from EMSIFA data
 export const getProvinces = async (): Promise<Province[]> => {
   try {
-    console.log('🌍 Fetching provinces from API...');
-    const response = await fetchWithAuth(`${RAJAONGKIR_BASE_URL}/destination/province`);
-    console.log('📡 Province API response status:', response.status);
+    console.log('🌍 Fetching provinces from Supabase...');
+    const { data: provinces, error } = await supabase
+      .from('provinces')
+      .select('id, name')
+      .order('name');
     
-    const data: ApiResponse<Province[]> = await response.json();
-    console.log('📋 Province API response data:', data);
-    
-    if (!response.ok || data.meta.code !== 200) {
-      console.error('❌ Province API error:', data.meta);
-      throw new Error(`API error: ${data.meta.message || 'Unknown error'}`);
+    if (error) {
+      console.error('❌ Error fetching provinces:', error);
+      return [];
     }
     
-    console.log('✅ Provinces fetched successfully:', data.data.length, 'provinces');
-    return data.data;
+    console.log('✅ Provinces fetched successfully:', provinces?.length || 0, 'provinces');
+    return provinces || [];
   } catch (error) {
     console.error('❌ Error fetching provinces:', error);
-    throw error;
+    return [];
   }
 };
 
-// Get cities by province ID
+// Get cities by province ID from EMSIFA data
 export const getCitiesByProvince = async (provinceId: number): Promise<City[]> => {
   try {
-    const url = `${RAJAONGKIR_BASE_URL}/destination/city?province_id=${provinceId}`;
-    console.log('🏙️ Fetching cities from API:', url);
+    console.log('🏙️ Fetching cities from Supabase for province:', provinceId);
     
-    const response = await fetchWithAuth(url);
-    console.log('📡 City API response status:', response.status);
+    const { data: cities, error } = await supabase
+      .from('regencies')
+      .select('id, name, province_id')
+      .eq('province_id', provinceId)
+      .order('name');
     
-    const data: ApiResponse<City[]> = await response.json();
-    console.log('📋 City API response data:', data);
-    
-    if (!response.ok || data.meta.code !== 200) {
-      console.error('❌ City API error:', data.meta);
-      throw new Error(`API error: ${data.meta.message || 'Unknown error'}`);
+    if (error) {
+      console.error('❌ Error fetching cities:', error);
+      return [];
     }
     
-    console.log('✅ Cities fetched successfully:', data.data.length, 'cities');
-    return data.data;
+    // Transform to match City interface
+    const transformedCities: City[] = (cities || []).map(city => ({
+      id: city.id,
+      name: city.name,
+      province_id: city.province_id,
+      zip_code: '00000' // Default zip code since EMSIFA doesn't include this
+    }));
+    
+    console.log('✅ Cities fetched successfully:', transformedCities.length, 'cities');
+    return transformedCities;
   } catch (error) {
     console.error('❌ Error fetching cities:', error);
-    throw error;
+    return [];
   }
 };
 
-// Get districts by city ID
+// Get districts by city ID from EMSIFA data
 export const getDistrictsByCity = async (cityId: number): Promise<District[]> => {
   try {
-    const url = `${RAJAONGKIR_BASE_URL}/destination/subdistrict?city_id=${cityId}`;
-    console.log('🏘️ Fetching districts from API:', url);
+    console.log('🏘️ Fetching districts from Supabase for city:', cityId);
     
-    const response = await fetchWithAuth(url);
-    console.log('📡 District API response status:', response.status);
+    const { data: districts, error } = await supabase
+      .from('districts')
+      .select('id, name')
+      .eq('regency_id', cityId)
+      .order('name');
     
-    const data: ApiResponse<District[]> = await response.json();
-    console.log('📋 District API response data:', data);
-    
-    if (!response.ok || data.meta.code !== 200) {
-      console.error('❌ District API error:', data.meta);
-      throw new Error(`API error: ${data.meta.message || 'Unknown error'}`);
+    if (error) {
+      console.error('❌ Error fetching districts:', error);
+      return [];
     }
     
-    console.log('✅ Districts fetched successfully:', data.data.length, 'districts');
-    return data.data;
+    // Transform to match District interface
+    const transformedDistricts: District[] = (districts || []).map(district => ({
+      id: district.id,
+      name: district.name,
+      zip_code: '00000' // Default zip code since EMSIFA doesn't include this
+    }));
+    
+    console.log('✅ Districts fetched successfully:', transformedDistricts.length, 'districts');
+    return transformedDistricts;
   } catch (error) {
     console.error('❌ Error fetching districts:', error);
-    throw error;
+    return [];
   }
 };
 
@@ -169,31 +136,23 @@ export interface CostCalculationParams {
   courier?: string; // Optional: specific courier code
 }
 
+// Note: Shipping cost calculation removed - this would need to be implemented
+// with a different shipping service provider or custom logic
 export const calculateShippingCost = async (params: CostCalculationParams): Promise<ShippingCost[]> => {
-  try {
-    const { origin, destination, weight, courier = 'jne:pos:tiki' } = params;
-    
-    const response = await fetchWithAuth(`${RAJAONGKIR_BASE_URL}/calculate/domestic-cost`, {
-      method: 'POST',
-      body: JSON.stringify({
-        origin,
-        destination,
-        weight,
-        courier
-      })
-    });
-    
-    const data: ApiResponse<ShippingCost[]> = await response.json();
-    
-    if (data.meta.code !== 200) {
-      throw new Error(data.meta.message);
+  console.log('⚠️ Shipping cost calculation not implemented - using mock data');
+  console.log('📦 Calculation params:', params);
+  
+  // Return mock data for now - implement with actual shipping provider
+  return [
+    {
+      name: 'JNE',
+      code: 'jne',
+      service: 'REG',
+      description: 'Layanan Reguler',
+      cost: 15000,
+      etd: '2-3 hari'
     }
-    
-    return data.data;
-  } catch (error) {
-    console.error('Error calculating shipping cost:', error);
-    throw error;
-  }
+  ];
 };
 
 // Search locations (combined city & district search)
@@ -228,42 +187,39 @@ export const searchLocations = async (query: string): Promise<LocationSearchResu
   const results: LocationSearchResult[] = [];
   
   try {
-    console.log('📡 Searching domestic destinations...');
-    const url = `${RAJAONGKIR_BASE_URL}/destination/domestic-destination?search=${encodeURIComponent(query)}&limit=10&offset=0`;
-    console.log('🌐 API URL:', url);
+    console.log('📡 Searching EMSIFA locations via Supabase...');
     
-    const response = await fetchWithAuth(url);
-    console.log('📡 API response status:', response.status);
+    // Use direct query on regions_flat view for search
+    const { data: locations, error } = await supabase
+      .from('regions_flat')
+      .select('*')
+      .or(`qtext.ilike.%${query}%,district_name.ilike.%${query}%,city_name.ilike.%${query}%,province_name.ilike.%${query}%`)
+      .limit(10);
     
-    const data: ApiResponse<DomesticDestination[]> = await response.json();
-    console.log('📋 API response data:', data);
+    if (error) {
+      console.error('❌ Supabase search error:', error);
+      return [];
+    }
     
-    if (data.meta.status === 'success' && data.data) {
-      console.log('✅ Destinations fetched successfully:', data.data.length, 'locations');
+    if (locations) {
+      console.log('✅ Locations fetched successfully:', locations.length, 'locations');
       
-      for (const destination of data.data) {
-        // Create a result for each destination
+      for (const location of locations) {
         const result: LocationSearchResult = {
-          id: destination.id,
-          name: destination.subdistrict_name,
+          id: location.district_id,
+          name: location.district_name,
           type: 'district',
-          province_name: destination.province_name,
-          city_name: destination.city_name,
-          zip_code: destination.zip_code
+          province_name: location.province_name,
+          city_name: location.city_name,
+          zip_code: '00000' // Default zip code since EMSIFA doesn't include this
         };
         
         console.log('🎯 Location found:', result);
         results.push(result);
       }
-    } else {
-      console.log('❌ API returned unsuccessful status:', data.meta);
     }
   } catch (error) {
     console.error('❌ Error in searchLocations:', error);
-    // Handle 404 errors gracefully - it means no results found for this query
-    if (error instanceof Error && error.message.includes('404')) {
-      console.log('ℹ️ No locations found for query:', query);
-    }
   }
 
   console.log('🏁 Search completed. Total results:', results.length);
@@ -279,24 +235,34 @@ export const formatLocationName = (location: LocationSearchResult): string => {
   return `${location.name}, ${location.province_name}`;
 };
 
-// Test function to verify API endpoints
+// Test function to verify EMSIFA data endpoints via Supabase
 export const testApiEndpoints = async () => {
-  console.log('🧪 Testing API endpoints...');
+  console.log('🧪 Testing EMSIFA data endpoints via Supabase...');
   
   try {
-    // Test the new domestic destination search endpoint
-    console.log('🌍 Testing domestic destination search endpoint...');
-    const testQuery = 'jakarta';
-    const results = await searchLocations(testQuery);
-    console.log('✅ Domestic destination search test successful:', results.length, 'results found');
-    console.log('📋 Sample results:', results.slice(0, 3));
+    // Test provinces endpoint
+    console.log('Testing provinces...');
+    const provinces = await getProvinces();
+    console.log('Provinces result:', provinces.slice(0, 3));
     
-    // Test with another query
-    console.log('🔍 Testing with "kebon" query...');
-    const kebonResults = await searchLocations('kebon');
-    console.log('✅ Kebon search test successful:', kebonResults.length, 'results found');
-    console.log('📋 Kebon results:', kebonResults.slice(0, 3));
+    if (provinces.length > 0) {
+      // Test cities endpoint with first province
+      console.log('Testing cities...');
+      const cities = await getCitiesByProvince(provinces[0].id);
+      console.log('Cities result:', cities.slice(0, 3));
+      
+      if (cities.length > 0) {
+        // Test districts endpoint with first city
+        console.log('Testing districts...');
+        const districts = await getDistrictsByCity(cities[0].id);
+        console.log('Districts result:', districts.slice(0, 3));
+      }
+    }
     
+    // Test location search
+    console.log('Testing location search...');
+    const searchResults = await searchLocations('jakarta');
+    console.log('Search results:', searchResults.slice(0, 3));
   } catch (error) {
     console.error('❌ API test failed:', error);
   }
@@ -304,5 +270,5 @@ export const testApiEndpoints = async () => {
 
 // Make test function available globally for debugging
 if (typeof window !== 'undefined') {
-  (window as any).testRajaOngkirAPI = testApiEndpoints;
+  (window as any).testEMSIFAAPI = testApiEndpoints;
 }

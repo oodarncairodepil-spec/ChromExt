@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { searchLocations, testApiEndpoints, LocationSearchResult } from '../lib/shipping'
+import { testApiEndpoints } from '../lib/shipping'
+import { LocationPicker } from '../components/LocationPicker'
+import { LocationResult } from '../hooks/useLocationSearch'
 
 interface User {
   id: string;
@@ -51,10 +53,8 @@ const UserCreate: React.FC = () => {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   
-  // Location search state
-  const [locationSearch, setLocationSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([])
-  const [showResults, setShowResults] = useState(false)
+  // Location selection state
+  const [selectedLocation, setSelectedLocation] = useState<LocationResult | null>(null)
 
   useEffect(() => {
     if (location.state?.phone) {
@@ -71,36 +71,15 @@ const UserCreate: React.FC = () => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
-  const handleLocationSearch = async (query: string) => {
-    setLocationSearch(query)
-    
-    if (query.length >= 3) {
-      try {
-        const results = await searchLocations(query)
-        setSearchResults(results)
-        setShowResults(true)
-      } catch (error) {
-        console.error('Error searching locations:', error)
-        setSearchResults([])
-      }
+  const handleLocationSelect = (location: LocationResult | null) => {
+    setSelectedLocation(location)
+    if (location) {
+      updateFormData('city', location.city_name)
+      updateFormData('district', location.district_name)
     } else {
-      setSearchResults([])
-      setShowResults(false)
-    }
-  }
-
-  const selectLocation = (location: LocationSearchResult) => {
-    if (location.type === 'city') {
-      updateFormData('city', location.name)
+      updateFormData('city', '')
       updateFormData('district', '')
-    } else {
-      updateFormData('city', location.city_name || '')
-      updateFormData('district', location.name)
     }
-    
-    setLocationSearch(`${location.name}${location.city_name ? `, ${location.city_name}` : ''}${location.province_name ? `, ${location.province_name}` : ''}`)
-    setShowResults(false)
-    setSearchResults([])
   }
 
   const registerUser = async () => {
@@ -219,48 +198,26 @@ const UserCreate: React.FC = () => {
             />
           </div>
 
-          <div className="relative">
-            <label htmlFor="location-search" className="block text-sm font-medium text-gray-700 mb-1">
-              City/District Search *
+          <div>
+            <label htmlFor="location-picker" className="block text-sm font-medium text-gray-700 mb-1">
+              City/District *
             </label>
-            <input
-              id="location-search"
-              type="text"
-              value={locationSearch}
-              onChange={(e) => handleLocationSearch(e.target.value)}
-              placeholder="Type at least 3 characters to search for city or district..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <LocationPicker
+              value={selectedLocation}
+              onChange={handleLocationSelect}
+              placeholder="Search for city or district..."
+              className="w-full"
+              required
             />
             
-            {/* Search Results Dropdown */}
-            {showResults && searchResults.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                {searchResults.map((result, index) => (
-                  <div
-                    key={index}
-                    onClick={() => selectLocation(result)}
-                    className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                  >
-                    <div className="font-medium text-gray-900">
-                      {result.name}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {result.type === 'city' ? 'City' : 'District'}
-                      {result.city_name && result.type === 'district' && ` ${result.city_name}`}
-                      {result.province_name && `, ${result.province_name}`}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            
             {/* Selected Location Display */}
-            {(formData.city || formData.district) && (
-              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-md">
-                <div className="text-sm text-green-800">
+            {selectedLocation && (
+              <div className="mt-2 p-2 bg-blue-50 rounded-md">
+                <div className="text-sm text-blue-800">
                   <strong>Selected:</strong>
-                  {formData.district && ` ${formData.district} (District)`}
-                  {formData.city && ` in ${formData.city} (City)`}
+                  {selectedLocation.district_name && ` ${selectedLocation.district_name}`}
+                  {selectedLocation.city_name && `, ${selectedLocation.city_name}`}
+                  {selectedLocation.province_name && `, ${selectedLocation.province_name}`}
                 </div>
               </div>
             )}
