@@ -203,7 +203,7 @@ export const fetchTemplates = async () => {
   try {
     const { data, error } = await supabase
       .from('quick_reply_templates')
-      .select('id, title, message, image_url, image_name, is_active, usage_count, product_id, is_system, is_deletable, created_at, updated_at')
+      .select('id, title, message, preview_content, image_url, image_name, is_active, usage_count, product_id, is_system, is_deletable, created_at, updated_at')
       .eq('is_active', true)
       .order('usage_count', { ascending: false });
     

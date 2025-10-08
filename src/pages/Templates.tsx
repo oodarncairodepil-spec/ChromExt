@@ -62,6 +62,7 @@ const Templates: React.FC = () => {
     try {
       // Generate WhatsApp message with template content
       const message = await generateWhatsAppMessage({
+        id: template.id,
         title: template.title || 'Template',
         message: template.message || '',
         image_url: template.image_url,
@@ -99,6 +100,7 @@ const Templates: React.FC = () => {
       // Try to copy to clipboard as fallback
       try {
         const message = await generateWhatsAppMessage({
+          id: template.id,
           title: template.title || 'Template',
           message: template.message || '',
           image_url: template.image_url,

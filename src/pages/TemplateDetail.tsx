@@ -20,6 +20,7 @@ interface Template {
   id: string;
   title: string;
   message: string;
+  preview_content?: string;
   image_url: string | null;
   image_name: string | null;
   is_active: boolean;
@@ -40,7 +41,8 @@ const TemplateDetail: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState<Partial<Template>>({
     title: '',
-    message: ''
+    message: '',
+    preview_content: ''
   })
   const [saving, setSaving] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -82,6 +84,7 @@ const TemplateDetail: React.FC = () => {
       setEditForm({
         title: templateData.title,
         message: templateData.message,
+        preview_content: templateData.preview_content || '',
         is_active: templateData.is_active,
         product_id: templateData.product_id
       })
@@ -115,6 +118,7 @@ const TemplateDetail: React.FC = () => {
         .update({
           title: editForm.title,
           message: editForm.message,
+          preview_content: editForm.preview_content || editForm.message,
           is_active: editForm.is_active,
           product_id: editForm.product_id,
           updated_at: new Date().toISOString()
@@ -352,7 +356,7 @@ const TemplateDetail: React.FC = () => {
                   <textarea
                     value={editForm.message || ''}
                     onChange={(e) => handleInputChange('message', e.target.value)}
-                    rows={12}
+                    rows={8}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
                   />
                 ) : (
@@ -360,6 +364,35 @@ const TemplateDetail: React.FC = () => {
                     <pre className="whitespace-pre-wrap text-sm text-gray-800 font-mono">
                       {template.message}
                     </pre>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">Preview Content</label>
+                {isEditing ? (
+                  <>
+                    <textarea
+                      value={editForm.preview_content || ''}
+                      onChange={(e) => handleInputChange('preview_content', e.target.value)}
+                      rows={4}
+                      placeholder="Rich description for social media previews (optional)"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      This content will be used for social media previews. If empty, the message content will be used instead.
+                    </p>
+                  </>
+                ) : (
+                  <div className="bg-gray-50 p-4 rounded-md border">
+                    <p className="text-sm text-gray-800">
+                      {template.preview_content || template.message || 'No preview content'}
+                    </p>
+                    {!template.preview_content && (
+                      <p className="text-xs text-gray-500 mt-1 italic">
+                        Using message content as fallback
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,6 +1,7 @@
 // Utility functions for generating WhatsApp messages with OG previews and image links
 
 interface Template {
+  id?: string;
   title?: string;
   message?: string;
   image_url?: string | null;
@@ -28,11 +29,17 @@ interface ProductVariant {
 export function generateWhatsAppMessage(template: Template): string {
   let message = template.message || '';
   
+  // Add template preview URL if template has ID and image
+  if (template.id && template.image_url) {
+    const templatePreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?template_id=${template.id}`;
+    message += `\n\n${templatePreviewUrl}`;
+  }
+  
   // Add product preview URL if template is linked to a product
   if (template.product_id) {
     // Generate product preview URL using Supabase function
     const productPreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?product_id=${template.product_id}`;
-    message += `\n\n  ${productPreviewUrl}`;
+    message += `\n\n${productPreviewUrl}`;
   }
   
   return message;

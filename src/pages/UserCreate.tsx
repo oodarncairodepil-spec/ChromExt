@@ -148,13 +148,13 @@ const UserCreate: React.FC = () => {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-800">Register New User</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">Register New User</h2>
         <button
           onClick={() => navigate('/users')}
-          className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+          className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
         >
-          Back
+          Cancel
         </button>
       </div>
 

@@ -4,6 +4,9 @@ import { supabase, uploadImage, uploadProductImage } from '../lib/supabase'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { ProductVariant, fetchProductVariants, updateProductVariant } from '../utils/variantUtils'
 import { generateVariantMessage, generateProductMessage } from '../utils/ogUtils'
+import { compressImage, isImageFile, formatFileSize } from '../utils/imageCompression'
+
+
 
 interface Product {
   id: string;
@@ -32,6 +35,9 @@ const ProductDetail: React.FC = () => {
   const [editedProduct, setEditedProduct] = useState<Partial<Product>>({})
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [compressingImage, setCompressingImage] = useState(false)
+  const [originalImageSize, setOriginalImageSize] = useState<number | null>(null)
+  const [compressedImageSize, setCompressedImageSize] = useState<number | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [variants, setVariants] = useState<ProductVariant[]>([])
   const [editingVariants, setEditingVariants] = useState<{[key: string]: Partial<ProductVariant>}>({})
@@ -96,15 +102,42 @@ const ProductDetail: React.FC = () => {
     }))
   }
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      setImageFile(file)
-      const reader = new FileReader()
-      reader.onload = () => {
-        setImagePreview(reader.result as string)
+      if (!isImageFile(file)) {
+        setError('Please select a valid image file')
+        return
       }
-      reader.readAsDataURL(file)
+
+      setOriginalImageSize(file.size)
+      setCompressingImage(true)
+      setError(null)
+
+      try {
+        // Compress the image to under 300KB for WhatsApp compatibility
+        const compressedFile = await compressImage(file, {
+          maxSizeKB: 300,
+          maxWidth: 1200,
+          maxHeight: 630,
+          quality: 0.8,
+          format: 'image/jpeg'
+        })
+
+        setImageFile(compressedFile)
+        setCompressedImageSize(compressedFile.size)
+        
+        const reader = new FileReader()
+        reader.onload = () => {
+          setImagePreview(reader.result as string)
+        }
+        reader.readAsDataURL(compressedFile)
+      } catch (error) {
+        console.error('Image compression failed:', error)
+        setError('Failed to compress image. Please try a different image.')
+      } finally {
+        setCompressingImage(false)
+      }
     }
   }
 
@@ -157,11 +190,25 @@ const ProductDetail: React.FC = () => {
   const handleVariantImageUpload = async (variantId: string, file: File | undefined) => {
     if (!file || !product?.id) return
 
+    if (!isImageFile(file)) {
+      setError('Please select a valid image file')
+      return
+    }
+
     try {
       setVariantsSaving(prev => ({ ...prev, [variantId]: true }))
       
-      // Upload image to Supabase storage
-      const imageUrl = await uploadProductImage(file, product.id, false)
+      // Compress the image to under 300KB for WhatsApp compatibility
+      const compressedFile = await compressImage(file, {
+        maxSizeKB: 300,
+        maxWidth: 1200,
+        maxHeight: 630,
+        quality: 0.8,
+        format: 'image/jpeg'
+      })
+      
+      // Upload compressed image to Supabase storage
+      const imageUrl = await uploadProductImage(compressedFile, product.id, false)
       
       // Update variant with new image URL
       const updatedVariant = await updateProductVariant(variantId, {
@@ -190,7 +237,7 @@ const ProductDetail: React.FC = () => {
       }
     } catch (error) {
       console.error('Error uploading variant image:', error)
-      alert('Failed to upload image. Please try again.')
+      setError('Failed to upload image. Please try again.')
     } finally {
       setVariantsSaving(prev => ({ ...prev, [variantId]: false }))
     }
@@ -378,16 +425,7 @@ const ProductDetail: React.FC = () => {
           <div className="flex flex-wrap gap-2">
             {!isEditing ? (
               <>
-                <button
-                  onClick={handleProductShare}
-                  className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
-                  title="Send to WhatsApp"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14m-7-7l7 7-7 7" />
-                  </svg>
-                  Send
-                </button>
+
                 <button
                   onClick={handleDelete}
                   className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
@@ -456,19 +494,63 @@ const ProductDetail: React.FC = () => {
             />
             {isEditing && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                <label className="cursor-pointer bg-white text-black px-3 py-1 rounded text-sm">
-                  Change Image
+                <label className={`cursor-pointer bg-white text-black px-3 py-1 rounded text-sm ${
+                  compressingImage ? 'opacity-50 cursor-not-allowed' : ''
+                }`}>
+                  {compressingImage ? (
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-900 mr-2"></div>
+                      Compressing image...
+                    </div>
+                  ) : (
+                    'Change Image'
+                  )}
                   <input
                     type="file"
                     accept="image/*"
                     onChange={handleImageChange}
                     className="hidden"
+                    disabled={compressingImage}
                   />
                 </label>
               </div>
             )}
           </div>
         </div>
+
+        {/* Image Compression Info */}
+        {isEditing && (originalImageSize || compressedImageSize) && (
+          <div className="mb-6 bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <h3 className="text-sm font-medium text-blue-800 mb-2">Image Compression Info</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              {originalImageSize && (
+                <div>
+                  <span className="text-blue-700 font-medium">Original Size:</span>
+                  <span className="ml-2 text-blue-600">{formatFileSize(originalImageSize)}</span>
+                </div>
+              )}
+              {compressedImageSize && (
+                <div>
+                  <span className="text-blue-700 font-medium">Compressed Size:</span>
+                  <span className="ml-2 text-blue-600">{formatFileSize(compressedImageSize)}</span>
+                </div>
+              )}
+              {originalImageSize && compressedImageSize && (
+                <div>
+                  <span className="text-blue-700 font-medium">Reduction:</span>
+                  <span className="ml-2 text-blue-600">
+                    {Math.round(((originalImageSize - compressedImageSize) / originalImageSize) * 100)}%
+                  </span>
+                </div>
+              )}
+            </div>
+            {compressedImageSize && compressedImageSize < 300 * 1024 && (
+              <div className="mt-2 text-green-600 text-sm font-medium">
+                ✓ WhatsApp compatible (under 300KB)
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Product Name */}

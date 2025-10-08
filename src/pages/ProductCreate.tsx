@@ -9,6 +9,7 @@ import {
   VariantTier,
   VariantCombination 
 } from '../utils/variantUtils'
+import { compressImage, isImageFile, formatFileSize } from '../utils/imageCompression'
 
 interface ProductFormData {
   name: string;
@@ -47,6 +48,9 @@ const ProductCreate: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showVariantPreview, setShowVariantPreview] = useState(false)
+  const [compressingImage, setCompressingImage] = useState(false)
+  const [originalImageSize, setOriginalImageSize] = useState<number | null>(null)
+  const [compressedImageSize, setCompressedImageSize] = useState<number | null>(null)
 
   const handleInputChange = async (field: keyof ProductFormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -137,15 +141,42 @@ const ProductCreate: React.FC = () => {
     }
   }, [formData.name, formData.has_variants])
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      setImageFile(file)
-      const reader = new FileReader()
-      reader.onload = () => {
-        setImagePreview(reader.result as string)
+      if (!isImageFile(file)) {
+        setError('Please select a valid image file')
+        return
       }
-      reader.readAsDataURL(file)
+
+      setOriginalImageSize(file.size)
+      setCompressingImage(true)
+      setError(null)
+
+      try {
+        // Compress the image to under 300KB for WhatsApp compatibility
+        const compressedFile = await compressImage(file, {
+          maxSizeKB: 300,
+          maxWidth: 1200,
+          maxHeight: 630,
+          quality: 0.8,
+          format: 'image/jpeg'
+        })
+
+        setImageFile(compressedFile)
+        setCompressedImageSize(compressedFile.size)
+        
+        const reader = new FileReader()
+        reader.onload = () => {
+          setImagePreview(reader.result as string)
+        }
+        reader.readAsDataURL(compressedFile)
+      } catch (error) {
+        console.error('Image compression failed:', error)
+        setError('Failed to compress image. Please try a different image.')
+      } finally {
+        setCompressingImage(false)
+      }
     }
   }
 
@@ -315,7 +346,12 @@ const ProductCreate: React.FC = () => {
           
           <div className="mb-6 flex justify-center">
             <div className="w-48 h-48 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden relative">
-              {imagePreview ? (
+              {compressingImage ? (
+                <div className="text-gray-500 text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <div className="text-sm">Compressing image...</div>
+                </div>
+              ) : imagePreview ? (
                 <img 
                   src={imagePreview} 
                   alt="Product preview" 
@@ -326,19 +362,51 @@ const ProductCreate: React.FC = () => {
                   <div className="text-sm">No image selected</div>
                 </div>
               )}
-              <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                    <label className="cursor-pointer bg-white text-black px-3 py-1 rounded text-sm">
-                      {imagePreview ? 'Change Image' : 'Upload Image'}
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={handleImageChange}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
+              {!compressingImage && (
+                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                  <label className="cursor-pointer bg-white text-black px-3 py-1 rounded text-sm">
+                    {imagePreview ? 'Change Image' : 'Upload Image'}
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleImageChange}
+                      className="hidden"
+                      disabled={compressingImage}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
           </div>
+          
+          {/* Image compression info */}
+          {(originalImageSize || compressedImageSize) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-blue-900 mb-2">Image Compression Info</h4>
+              <div className="space-y-1 text-sm text-blue-800">
+                {originalImageSize && (
+                  <div>Original size: {formatFileSize(originalImageSize)}</div>
+                )}
+                {compressedImageSize && (
+                  <div>Compressed size: {formatFileSize(compressedImageSize)}</div>
+                )}
+                {originalImageSize && compressedImageSize && originalImageSize > compressedImageSize && (
+                  <div className="text-green-700 font-medium">
+                    Reduced by {formatFileSize(originalImageSize - compressedImageSize)} 
+                    ({Math.round((1 - compressedImageSize / originalImageSize) * 100)}%)
+                  </div>
+                )}
+                {compressedImageSize && compressedImageSize <= 300 * 1024 && (
+                  <div className="text-green-700 font-medium flex items-center">
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    WhatsApp compatible (under 300KB)
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">

@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 interface TemplateFormData {
   title: string;
   message: string;
+  preview_content: string;
   is_active: boolean;
 }
 
@@ -17,6 +18,7 @@ const TemplateCreate: React.FC = () => {
   const [formData, setFormData] = useState<TemplateFormData>({
     title: '',
     message: '',
+    preview_content: '',
     is_active: true
   })
   const [imageFile, setImageFile] = useState<File | null>(null)
@@ -70,6 +72,7 @@ const TemplateCreate: React.FC = () => {
           user_id: user.id,
           title: formData.title.trim(),
           message: formData.message.trim(),
+          preview_content: formData.preview_content.trim() || formData.message.trim(),
           image_url: null, // Will be updated after image upload
           image_name: null,
           is_active: formData.is_active,
@@ -114,14 +117,14 @@ const TemplateCreate: React.FC = () => {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-gray-900">Create New Template</h2>
           <button
             onClick={() => navigate('/templates')}
-            className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+            className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
           >
-            Back
+            Cancel
           </button>
-          <h1 className="text-2xl font-bold text-gray-900">Create New Template</h1>
         </div>
       </div>
 
@@ -165,6 +168,23 @@ const TemplateCreate: React.FC = () => {
                 rows={6}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            <div>
+              <label htmlFor="preview_content" className="block text-sm font-medium text-gray-700 mb-1">
+                Preview Description (Optional)
+              </label>
+              <textarea
+                id="preview_content"
+                value={formData.preview_content}
+                onChange={(e) => updateFormData('preview_content', e.target.value)}
+                placeholder="Enter rich description for social media previews (if empty, will use message)"
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                This description will be used for WhatsApp link previews and social media sharing. If left empty, the message content will be used.
+              </p>
             </div>
 
 
