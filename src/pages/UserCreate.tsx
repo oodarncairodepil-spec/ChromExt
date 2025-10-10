@@ -255,20 +255,7 @@ const UserCreate: React.FC = () => {
             </select>
           </div>
 
-          <div>
-            <label htmlFor="reg-cart-count" className="block text-sm font-medium text-gray-700 mb-1">
-              Cart/Orders Count
-            </label>
-            <input
-              id="reg-cart-count"
-              type="number"
-              value={formData.cart_count}
-              onChange={(e) => updateFormData('cart_count', parseInt(e.target.value) || 0)}
-              placeholder="Number of previous orders"
-              min="0"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+
 
           <button
             onClick={registerUser}

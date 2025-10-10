@@ -214,7 +214,7 @@ const ShippingCourier: React.FC = () => {
   };
 
   const getTypeIcon = (type: string) => {
-    return type === 'Express' ? '📦' : '⚡';
+    return type === 'Express' ? 'EXP' : 'INS';
   };
 
   const getTypeColor = (type: string) => {
@@ -401,8 +401,8 @@ const ShippingCourier: React.FC = () => {
             <div className="ml-3">
               <h3 className="text-sm font-medium text-blue-800">About Courier Types</h3>
               <div className="mt-2 text-sm text-blue-700">
-                <p><strong>📦 Express:</strong> Standard delivery services with longer transit times but lower costs.</p>
-                <p className="mt-1"><strong>⚡ Instant:</strong> Same-day or next-day delivery services with higher costs but faster delivery.</p>
+                <p><strong>Express:</strong> Standard delivery services with longer transit times but lower costs.</p>
+                <p className="mt-1"><strong>Instant:</strong> Same-day or next-day delivery services with higher costs but faster delivery.</p>
               </div>
             </div>
           </div>

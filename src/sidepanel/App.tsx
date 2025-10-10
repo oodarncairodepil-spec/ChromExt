@@ -6,6 +6,9 @@ import Header from '../components/Header'
 import Home from '../pages/Home'
 import Products from '../pages/Products'
 import Users from '../pages/Users'
+import Orders from '../pages/Orders'
+import OrderDetail from '../pages/OrderDetail'
+
 import Templates from '../pages/Templates'
 import Cart from '../pages/Cart'
 import Login from '../pages/Login'
@@ -22,7 +25,7 @@ import ShippingCourier from '../pages/ShippingCourier'
 import Test from '../pages/Test'
 import Loading from '../components/Loading'
 
-export type TabType = 'home' | 'products' | 'users' | 'templates' | 'cart'
+export type TabType = 'home' | 'products' | 'orders' | 'templates' | 'cart'
 
 const AuthenticatedApp: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -48,7 +51,7 @@ const AuthenticatedApp: React.FC = () => {
   const getActiveTab = (): TabType => {
     const path = location.pathname
     if (path.startsWith('/products')) return 'products'
-    if (path.startsWith('/users')) return 'users'
+    if (path.startsWith('/orders')) return 'orders'
     if (path.startsWith('/templates')) return 'templates'
     if (path.startsWith('/cart')) return 'cart'
     return 'home'
@@ -75,6 +78,9 @@ const AuthenticatedApp: React.FC = () => {
           <Route path="/users" element={<Users />} />
           <Route path="/users/create" element={<UserCreate />} />
           <Route path="/users/:id" element={<UserDetail />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/orders/:id" element={<OrderDetail />} />
+
           <Route path="/templates" element={<Templates />} />
           <Route path="/templates/create" element={<TemplateCreate />} />
           <Route path="/templates/:id" element={<TemplateDetail />} />

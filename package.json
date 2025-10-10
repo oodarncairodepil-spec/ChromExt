@@ -6,7 +6,7 @@
   "author": "Your Name",
   "scripts": {
     "dev": "plasmo dev --target=chrome-mv3-dev",
-    "fix-dev-manifest": "node -e \"const fs = require('fs'); const path = 'build/chrome-mv3-dev-dev/manifest.json'; if (fs.existsSync(path)) { const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*']; fs.writeFileSync(path, JSON.stringify(manifest, null, 2)); console.log('Dev manifest permissions fixed!'); } else { console.log('Dev manifest not found!'); }\"",
+    "fix-dev-manifest": "node -e \"const fs = require('fs'); const path = 'build/chrome-mv3-dev-dev/manifest.json'; if (fs.existsSync(path)) { const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting', 'storage']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*', 'http://localhost:*/*']; fs.writeFileSync(path, JSON.stringify(manifest, null, 2)); console.log('Dev manifest permissions fixed!'); } else { console.log('Dev manifest not found!'); }\"",
     "dev-original": "plasmo dev",
     "build": "plasmo build --target=chrome-mv3-prod && node -e \"const fs = require('fs'); const manifest = JSON.parse(fs.readFileSync('build/chrome-mv3-prod-prod/manifest.json', 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting', 'storage']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*', 'http://localhost:*/*']; fs.writeFileSync('build/chrome-mv3-prod-prod/manifest.json', JSON.stringify(manifest, null, 2));\"",
     "package": "plasmo package",

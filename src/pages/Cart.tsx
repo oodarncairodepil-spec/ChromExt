@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getProvinces, getCitiesByProvince, getDistrictsByCity, calculateShippingCost, Province, City, District, CostCalculationParams, ShippingCost } from '../lib/shipping'
 import Loading from '../components/Loading'
 import Dialog from '../components/Dialog'
 import LocationPicker from '../components/LocationPicker'
+import InvoiceModal from '../components/InvoiceModal'
 import { LocationResult } from '../hooks/useLocationSearch'
 import { useAuth } from '../contexts/AuthContext'
 import { parseLocationTextEnhanced } from '../utils/locationParser'
+import { generateInvoiceImage, generateOrderSummaryText } from '../utils/invoiceGenerator'
+import { formatPhoneNumber, formatPhoneNumberDisplay, normalizePhoneForQuery } from '../utils/phoneFormatter'
 
 interface CartItem {
   id: string
   user_id: string
   product_id: string
+  variant_id?: string
   quantity: number
   price: string
   created_at: string
@@ -22,6 +26,15 @@ interface CartItem {
     name: string
     image?: string
     price: string
+  }
+  variant?: {
+    id: string
+    full_product_name: string
+    variant_tier_1_value?: string
+    variant_tier_2_value?: string
+    variant_tier_3_value?: string
+    price: string
+    image_url?: string
   }
 }
 
@@ -100,6 +113,7 @@ interface ServicePreference {
 const Cart: React.FC = () => {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -167,6 +181,12 @@ const Cart: React.FC = () => {
   const [showLoadSuccessDialog, setShowLoadSuccessDialog] = useState(false)
   const [showLoadErrorDialog, setShowLoadErrorDialog] = useState(false)
   const [loadErrorMessage, setLoadErrorMessage] = useState('')
+  
+  // Invoice modal state
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false)
+  const [invoiceImage, setInvoiceImage] = useState('')
+  const [orderSummaryText, setOrderSummaryText] = useState('')
+  const [completedOrderNumber, setCompletedOrderNumber] = useState('')
 
 
   const [isDetecting, setIsDetecting] = useState(false)
@@ -184,8 +204,15 @@ const Cart: React.FC = () => {
     loadProvinces()
     loadPaymentMethods()
     loadCourierData()
-    loadPersistedData()
-  }, [])
+    
+    // Check if we're in edit mode
+    const mode = searchParams.get('mode')
+    if (mode === 'edit') {
+      loadEditOrderData()
+    } else {
+      loadPersistedData()
+    }
+  }, [user])
 
   // Auto-save cart data when form fields change
   useEffect(() => {
@@ -237,6 +264,48 @@ const Cart: React.FC = () => {
     }
     
     localStorage.setItem(`cart_data_${user.id}`, JSON.stringify(cartData))
+  }
+
+  // Load edit order data from localStorage
+  const loadEditOrderData = () => {
+    try {
+      const editOrderData = localStorage.getItem('editOrderData')
+      if (editOrderData) {
+        const orderData = JSON.parse(editOrderData)
+        console.log('Loading edit order data:', orderData)
+        
+        // Pre-fill customer information
+        setManualBuyerName(orderData.customerName || '')
+        setManualBuyerPhone(orderData.customerPhone || '')
+        setManualBuyerAddress(orderData.customerAddress || '')
+        
+        // Convert order items to cart items format
+        if (orderData.items && Array.isArray(orderData.items)) {
+          const editCartItems = orderData.items.map((item: any, index: number) => ({
+            id: `edit_${index}`,
+            user_id: user?.id || '',
+            product_id: item.product_id || '',
+            quantity: item.quantity || 1,
+            price: item.price?.toString() || '0',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            product: {
+              id: item.product_id || '',
+              name: item.product_name || 'Unknown Product',
+              image: item.product_image || '',
+              price: item.price?.toString() || '0'
+            }
+          }))
+          
+          setCartItems(editCartItems)
+        }
+        
+        // Clear the edit order data from localStorage after loading
+        localStorage.removeItem('editOrderData')
+      }
+    } catch (error) {
+      console.error('Error loading edit order data:', error)
+    }
   }
 
   // Load cart form data from localStorage
@@ -301,16 +370,31 @@ const Cart: React.FC = () => {
     }
     
     try {
-      console.log('🔍 Checking existing draft for customer:', customerPhone, 'seller:', user.id)
-      const { data: existingDraft, error } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('seller_id', user.id)
-        .eq('status', 'draft')
-        .eq('customer_phone', customerPhone)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
+      // Get both possible phone formats for matching
+      const phoneFormats = normalizePhoneForQuery(customerPhone)
+      console.log('🔍 Checking existing draft for customer:', customerPhone, '-> formats:', phoneFormats, 'seller:', user.id)
+      
+      let existingDraft = null
+      let error = null
+      
+      // Try to find draft with either phone format
+      for (const phoneFormat of phoneFormats) {
+        const { data, error: queryError } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('seller_id', user.id)
+          .eq('status', 'draft')
+          .eq('customer_phone', phoneFormat)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+        
+        if (data && !queryError) {
+          existingDraft = data
+          break
+        }
+        error = queryError
+      }
       
       if (error) {
         console.log('🚨 Draft check query error:', error)
@@ -350,6 +434,15 @@ const Cart: React.FC = () => {
             name,
             image,
             price
+          ),
+          variant:product_variants(
+            id,
+            full_product_name,
+            variant_tier_1_value,
+            variant_tier_2_value,
+            variant_tier_3_value,
+            price,
+            image_url
           )
         `)
         .eq('user_id', user.id)
@@ -442,11 +535,12 @@ const Cart: React.FC = () => {
       // Create or find buyer
       let buyerId = null
       
-      // Check if buyer exists by phone number
+      // Check if buyer exists by phone number using normalized formats
+      const phoneFormats = normalizePhoneForQuery(manualBuyerPhone.trim())
       const { data: existingBuyer, error: buyerSearchError } = await supabase
         .from('users')
         .select('id')
-        .eq('phone', manualBuyerPhone.trim())
+        .or(`phone.eq.${phoneFormats[0]},phone.eq.${phoneFormats[1]}`)
         .single()
       
       if (existingBuyer) {
@@ -456,7 +550,7 @@ const Cart: React.FC = () => {
         const { data: newBuyer, error: createBuyerError } = await supabase
           .from('users')
           .insert({
-            phone: manualBuyerPhone.trim(),
+            phone: formatPhoneNumber(manualBuyerPhone.trim()),
             name: manualBuyerName.trim() || 'Unknown',
             address: manualBuyerAddress.trim() || '',
             city: manualBuyerCityDistrict.trim() || '',
@@ -500,7 +594,13 @@ const Cart: React.FC = () => {
         seller_id: user.id,
         buyer_id: buyerId,
         order_number: existingDraftId ? undefined : generatedOrderNumber, // Let DB trigger generate for new drafts
-        items: cartItems,
+        items: cartItems.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+          product_name: item.variant?.full_product_name || item.product?.name || 'Unknown Product',
+          product_image: item.product?.image || null
+        })),
         shipping_info: {
           destination: shippingDestination,
           courier: selectedCourier,
@@ -519,7 +619,7 @@ const Cart: React.FC = () => {
         status: 'draft',
         customer_name: manualBuyerName.trim() || 'Unknown',
         customer_address: manualBuyerAddress.trim() || '',
-        customer_phone: manualBuyerPhone.trim(),
+        customer_phone: formatPhoneNumberDisplay(manualBuyerPhone.trim()),
         customer_city: cityId || manualBuyerCityDistrict.trim() || '',
         customer_district: districtId || '',
         total_amount: totalAmount
@@ -612,6 +712,8 @@ const Cart: React.FC = () => {
       // Parse location text if LocationPicker wasn't used
       let cityId = selectedBuyerLocation?.city_id || null
       let districtId = selectedBuyerLocation?.district_id || null
+      let cityName = selectedBuyerLocation?.city_name || ''
+      let districtName = selectedBuyerLocation?.district_name || ''
       
       if (!selectedBuyerLocation && manualBuyerCityDistrict.trim()) {
         console.log('=== PARSING MANUAL LOCATION TEXT (CHECKOUT) ===');
@@ -622,12 +724,63 @@ const Cart: React.FC = () => {
         
         cityId = parsedLocation.city_id
         districtId = parsedLocation.district_id
+        cityName = parsedLocation.city_name
+        districtName = parsedLocation.district_name
+      }
+      
+      // Auto-register new user if not exists
+      const formattedPhone = formatPhoneNumber(manualBuyerPhone.trim())
+      console.log('=== AUTO-REGISTRATION CHECK ===')
+      console.log('Original phone:', manualBuyerPhone.trim())
+      console.log('Formatted phone:', formattedPhone);
+      
+      // Check if user already exists using normalized phone formats
+      const phoneFormats = normalizePhoneForQuery(manualBuyerPhone.trim())
+      console.log('Checking user existence with phone formats:', phoneFormats)
+      
+      const { data: existingUser, error: userCheckError } = await supabase
+        .from('users')
+        .select('id')
+        .or(`phone.eq.${phoneFormats[0]},phone.eq.${phoneFormats[1]}`)
+        .single()
+      
+      if (userCheckError && userCheckError.code === 'PGRST116') {
+        // User doesn't exist, create new user
+        console.log('User not found, creating new user...');
+        
+        const newUserData = {
+           name: manualBuyerName.trim(),
+           phone: formattedPhone,
+           address: manualBuyerAddress.trim(),
+           city: cityName || manualBuyerCityDistrict.trim(),
+           district: districtName || '',
+           note: '',
+           label: 'new',
+           cart_count: 0
+         }
+        
+        const { data: newUser, error: createUserError } = await supabase
+          .from('users')
+          .insert([newUserData])
+          .select()
+          .single()
+        
+        if (createUserError) {
+          console.error('Error creating new user:', createUserError)
+          // Continue with checkout even if user creation fails
+        } else {
+          console.log('New user created:', newUser)
+        }
+      } else if (!userCheckError) {
+        console.log('User already exists:', existingUser)
+      } else {
+        console.error('Error checking user existence:', userCheckError)
       }
       
       const orderData = {
         seller_id: user.id, // Changed from user_id to seller_id to match schema
         order_number: generatedOrderNumber,
-        customer_phone: manualBuyerPhone.trim(),
+        customer_phone: formattedPhone,
         customer_name: manualBuyerName.trim(),
         customer_address: manualBuyerAddress.trim(),
         customer_city: cityId || manualBuyerCityDistrict.trim(),
@@ -652,7 +805,8 @@ const Cart: React.FC = () => {
           product_id: item.product_id,
           quantity: item.quantity,
           price: parseFloat(item.price),
-          product_name: item.product?.name || 'Unknown Product'
+          product_name: item.variant?.full_product_name || item.product?.name || 'Unknown Product',
+          product_image: item.variant?.image_url || item.product?.image || null
         })),
         total_amount: total
       }
@@ -669,12 +823,90 @@ const Cart: React.FC = () => {
         return
       }
       
+      // Generate invoice image and summary text
+      try {
+        // Fetch user profile for shop information
+        let shopName = undefined
+        let shopLogoUrl = undefined
+        let sellerPhone = undefined
+        
+        try {
+          const { data: profileData, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('shop_name, shop_logo_url, phone_number')
+            .eq('user_id', user!.id)
+            .single()
+          
+          if (profileData && !profileError) {
+            shopName = profileData.shop_name
+            shopLogoUrl = profileData.shop_logo_url
+            sellerPhone = profileData.phone_number
+          }
+        } catch (profileError) {
+          console.warn('Could not fetch shop profile:', profileError)
+        }
+        
+        const invoiceData = {
+          order_number: newOrder.order_number || generatedOrderNumber,
+          customer_name: manualBuyerName.trim(),
+          customer_phone: formattedPhone,
+          customer_address: manualBuyerAddress.trim(),
+          items: cartItems.map(item => ({
+            product_name: item.variant?.full_product_name || item.product?.name || 'Unknown Product',
+            variant_name: item.variant ? `${item.variant.variant_tier_1_value || ''}${item.variant.variant_tier_2_value ? ' ' + item.variant.variant_tier_2_value : ''}${item.variant.variant_tier_3_value ? ' ' + item.variant.variant_tier_3_value : ''}`.trim() : undefined,
+            price: parseFloat(item.variant?.price || item.price),
+            quantity: item.quantity
+          })),
+          courier_name: selectedCourier.name,
+          service_name: selectedService.service_name,
+          shipping_cost: shippingFee,
+          discount_amount: discountAmount,
+          total_amount: total,
+          payment_method: {
+            bank_name: selectedPaymentMethod.bank_name,
+            account_number: selectedPaymentMethod.bank_account_number,
+            account_owner: selectedPaymentMethod.bank_account_owner_name
+          },
+          shop_name: shopName,
+          shop_logo_url: shopLogoUrl,
+          seller_phone: sellerPhone
+        }
+        
+        // Generate invoice image
+        const invoiceImageBase64 = await generateInvoiceImage(invoiceData)
+        
+        // Generate order summary text
+        const orderSummaryText = generateOrderSummaryText(invoiceData)
+        
+        // Update order with invoice image
+        const { error: updateError } = await supabase
+          .from('orders')
+          .update({ invoice_image: invoiceImageBase64 })
+          .eq('id', newOrder.id)
+        
+        if (updateError) {
+          console.error('Error saving invoice image:', updateError)
+        }
+        
+        // Display the order summary text to user
+         console.log('=== ORDER SUMMARY ===');
+         console.log(orderSummaryText);
+         
+         // Set invoice modal data and show it
+         setInvoiceImage(invoiceImageBase64)
+         setOrderSummaryText(orderSummaryText)
+         setCompletedOrderNumber(newOrder.order_number || generatedOrderNumber)
+         setShowInvoiceModal(true)
+        
+      } catch (invoiceError) {
+        console.error('Error generating invoice:', invoiceError)
+        alert('Order placed successfully, but there was an error generating the invoice.')
+      }
+      
       // Clear the cart and persisted data
       await clearCart()
       clearPersistedData()
       setExistingDraftId(null)
-       
-      alert('Order placed successfully!')
       
     } catch (error) {
       console.error('Error during checkout:', error)
@@ -794,14 +1026,32 @@ const Cart: React.FC = () => {
       
       console.log('Loading draft order for phone:', detectedPhone)
       
-      const { data: draftOrders, error } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('seller_id', user.id)
-        .eq('status', 'draft')
-        .eq('customer_phone', detectedPhone)
-        .order('updated_at', { ascending: false })
-        .limit(1)
+      // Get both possible phone formats for matching
+      const phoneFormats = normalizePhoneForQuery(detectedPhone)
+      console.log('Phone formats to search:', phoneFormats)
+      
+      let draftOrders = null
+      let error = null
+      
+      // Try to find draft with either phone format
+      for (const phoneFormat of phoneFormats) {
+        console.log('Searching with phone format:', phoneFormat)
+        const { data, error: queryError } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('seller_id', user.id)
+          .eq('status', 'draft')
+          .eq('customer_phone', phoneFormat)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+        
+        if (data && data.length > 0) {
+          draftOrders = data
+          console.log('Found draft orders with format:', phoneFormat, data)
+          break
+        }
+        error = queryError
+      }
         
       console.log('Supabase query result:', { draftOrders, error, length: draftOrders?.length })
 
@@ -1236,7 +1486,7 @@ const Cart: React.FC = () => {
   }
   
   const discountAmount = calculateDiscountAmount()
-  const totalAmount = subtotalAmount - discountAmount + (selectedShipping?.cost || 0)
+  const totalAmount = subtotalAmount - discountAmount + (selectedShipping?.cost || 0) + shippingFee
 
   // Render page content conditionally, but always mount dialogs
   let pageContent;
@@ -1337,7 +1587,7 @@ const Cart: React.FC = () => {
               
               <div className="flex-1">
                 <h3 className="font-medium text-gray-900">
-                  {item.product?.name || 'Unknown Product'}
+                  {item.variant?.full_product_name || item.product?.name || 'Unknown Product'}
                 </h3>
                 <div className="flex justify-between items-start mt-2">
                   <div className="text-left">
@@ -1509,11 +1759,7 @@ const Cart: React.FC = () => {
                   value={selectedBuyerLocation}
                   placeholder="Search for city and district..."
                 />
-                {selectedBuyerLocation && (
-                  <div className="text-sm text-gray-600">
-                    Selected: {selectedBuyerLocation.district_name}, {selectedBuyerLocation.city_name}
-                  </div>
-                )}
+
               </div>
             )}
           </div>
@@ -1626,64 +1872,7 @@ const Cart: React.FC = () => {
           </div>
         )}
 
-        {/* Selected Location */}
-        {shippingDestination && (shippingDestination.city_name || shippingDestination.district_name) && (
-          <div className="mb-4 p-3 bg-blue-50 rounded-md">
-            <div className="text-sm font-medium text-blue-900">
-              Selected Location:
-            </div>
-            <div className="text-sm text-blue-700">
-              {shippingDestination.district_name 
-                ? `${shippingDestination.district_name} (District)`
-                : `${shippingDestination.city_name} (City)`
-              }
-              {shippingDestination.province_name && `, ${shippingDestination.province_name}`}
-            </div>
-          </div>
-        )}
 
-        {/* Shipping Options */}
-        {loadingShipping && (
-          <div className="mb-4 text-center py-4">
-            <div className="inline-flex items-center">
-              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Calculating shipping costs...
-            </div>
-          </div>
-        )}
-
-        {shippingCosts.length > 0 && (
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Shipping Options
-            </label>
-            <div className="space-y-2">
-              {shippingCosts.map((cost, index) => (
-                <label key={index} className="flex items-center p-3 border rounded-md cursor-pointer hover:bg-gray-50">
-                  <input
-                    type="radio"
-                    name="shipping"
-                    value={index}
-                    checked={selectedShipping?.service === cost.service}
-                    onChange={() => setSelectedShipping(cost)}
-                    className="mr-3"
-                  />
-                  <div className="flex-1">
-                    <div className="font-medium">{cost.service}</div>
-                    <div className="text-sm text-gray-500">{cost.description}</div>
-                    <div className="text-sm text-gray-500">Estimated: {cost.etd}</div>
-                  </div>
-                  <div className="font-medium text-right">
-                    Rp {cost.cost.toLocaleString('id-ID')}
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Payment Method Selection */}
@@ -1824,15 +2013,12 @@ const Cart: React.FC = () => {
               <span className="font-medium text-green-600">-Rp {Math.floor(discountAmount).toLocaleString('id-ID')}</span>
             </div>
           )}
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-600">Shipping</span>
-            <span className="font-medium">
-              {selectedShipping 
-                ? `Rp ${selectedShipping.cost.toLocaleString('id-ID')}` 
-                : 'Select location first'
-              }
-            </span>
-          </div>
+          {((selectedShipping && selectedShipping.cost > 0) || shippingFee > 0) && (
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600">Shipping Fee</span>
+              <span className="font-medium">Rp {((selectedShipping?.cost || 0) + shippingFee).toLocaleString('id-ID')}</span>
+            </div>
+          )}
           <div className="border-t pt-2">
             <div className="flex justify-between">
               <span className="font-semibold text-gray-900">Total</span>
@@ -1941,6 +2127,15 @@ const Cart: React.FC = () => {
           </button>
         </div>
       </Dialog>
+      
+      {/* Invoice Modal */}
+      <InvoiceModal
+        isOpen={showInvoiceModal}
+        onClose={() => setShowInvoiceModal(false)}
+        invoiceImage={invoiceImage}
+        orderSummaryText={orderSummaryText}
+        orderNumber={completedOrderNumber}
+      />
     </>
   )
 }
