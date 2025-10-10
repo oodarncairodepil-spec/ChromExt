@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import Dialog from '../components/Dialog'
+import { useAuth } from '../contexts/AuthContext'
 
 interface User {
   id: string;
@@ -20,6 +21,7 @@ interface User {
 
 const Users: React.FC = () => {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [isDetecting, setIsDetecting] = useState(false)
   const [users, setUsers] = useState<User[]>([])
   const [filteredUsers, setFilteredUsers] = useState<User[]>([])
@@ -36,36 +38,47 @@ const Users: React.FC = () => {
 
   useEffect(() => {
     const loadUsersData = async () => {
+      if (!user) {
+        setError('Authentication required')
+        setLoading(false)
+        return
+      }
+
       try {
         setLoading(true)
         setError(null)
         
-        // Fetch users and carts data
+        // Fetch all users that belong to this shop owner using user_id
         const { data: usersData, error: usersError } = await supabase
           .from('users')
           .select('*')
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false })
         
         if (usersError) throw usersError
         
-        const { data: cartsData, error: cartsError } = await supabase
-          .from('cart_items')
-          .select('*')
-          .order('created_at', { ascending: false })
-        
-        if (cartsError) throw cartsError
-        
         setUsers(usersData || [])
         setFilteredUsers(usersData || [])
         
-        // Count carts per user
-        const cartCounts: {[key: string]: number} = {}
-        cartsData?.forEach((cart: any) => {
-          if (cart.user_id) {
-            cartCounts[cart.user_id] = (cartCounts[cart.user_id] || 0) + 1
+        // Count orders per customer
+        const orderCounts: {[key: string]: number} = {}
+        if (usersData && usersData.length > 0) {
+          const userIds = usersData.map(u => u.id)
+          const { data: orderCountData, error: orderCountError } = await supabase
+            .from('orders')
+            .select('buyer_id')
+            .eq('seller_id', user.id)
+            .in('buyer_id', userIds)
+          
+          if (!orderCountError && orderCountData) {
+            orderCountData.forEach((order: any) => {
+              if (order.buyer_id) {
+                orderCounts[order.buyer_id] = (orderCounts[order.buyer_id] || 0) + 1
+              }
+            })
           }
-        })
-        setUserCarts(cartCounts)
+        }
+        setUserCarts(orderCounts)
         
       } catch (err) {
         console.error('Error loading users:', err)
@@ -79,7 +92,7 @@ const Users: React.FC = () => {
     }
 
     loadUsersData()
-  }, [])
+  }, [user])
 
   // Filter users based on search term
   useEffect(() => {
@@ -215,6 +228,16 @@ const Users: React.FC = () => {
         setSearchTerm(result.activePhone);
         
         // Try to find existing user in database
+        if (!user) {
+          setDialogContent({ 
+            phone: '', 
+            userName: '', 
+            message: 'Authentication required' 
+          });
+          setShowErrorDialog(true);
+          return;
+        }
+        
         const { data: existingUser, error: userError } = await supabase
           .from('users')
           .select('*')

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { testApiEndpoints } from '../lib/shipping'
 import { LocationPicker } from '../components/LocationPicker'
 import { LocationResult } from '../hooks/useLocationSearch'
+import { useAuth } from '../contexts/AuthContext'
 
 interface User {
   id: string;
@@ -35,6 +36,7 @@ interface UserFormData {
 const UserCreate: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
   const phoneFromState = location.state?.phone || ''
   
   const [formData, setFormData] = useState<UserFormData>({
@@ -83,6 +85,11 @@ const UserCreate: React.FC = () => {
   }
 
   const registerUser = async () => {
+    if (!user) {
+      setError('Authentication required')
+      return
+    }
+
     if (!formData.phone || !formData.name || !formData.address) {
       setError('Please fill in all required fields (Phone, Name, Address)')
       return
@@ -96,6 +103,7 @@ const UserCreate: React.FC = () => {
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert({
+          user_id: user.id,
           phone: formData.phone,
           name: formData.name,
           address: formData.address,

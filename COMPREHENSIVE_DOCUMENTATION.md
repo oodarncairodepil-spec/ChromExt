@@ -5,13 +5,45 @@ A Chrome MV3 extension with side panel React app that integrates with WhatsApp W
 
 ## Recent Updates
 
-### UI Improvements (Latest)
-- **Removed "Send to WhatsApp" button** from ProductDetail.tsx for cleaner interface
-- **Updated header styling** in UserCreate.tsx and TemplateCreate.tsx:
-  - Changed from `h1` to `h2` elements
-  - Updated button styling with consistent design
+### Database Schema & Authentication Improvements (Latest)
+- **Database Schema Enhancements**:
+  - Added `user_id` column to `users` table referencing `auth.users(id)`
+  - Added `user_id` column to `variant_options` table for data isolation
+  - Added `user_id` column to `product_variants` table for proper relationships
+  - Created comprehensive migration scripts for schema updates
+  - Implemented proper data population based on order relationships
+
+- **Authentication & Data Security Fixes**:
+  - Fixed Users.tsx component to display all users associated with shop owner
+  - Updated component logic from order-based filtering to user_id-based filtering
+  - Resolved authentication issues in UserDetail.tsx, UserCreate.tsx, Products.tsx
+  - Implemented proper user data filtering to ensure users only access their own data
+  - Enhanced RLS policies for improved data security
+
+- **Migration Scripts Created**:
+  - `add-user-id-to-users-table.sql` - Adds user_id column to users table
+  - `run-add-user-id-to-users-migration.js` - Executes users table migration
+  - `check-users-data-integrity.js` - Verifies user_id values and relationships
+  - `populate-users-user-id.js` - Populates user_id based on order data
+  - `assign-remaining-users.js` - Assigns unassociated users to default seller
+
+- **Sign-in Page Streamlining**:
+  - Removed "Or" divider section for cleaner interface
+  - Removed "Use Manual Token Instead" link
+  - Added automatic redirect for unverified users to Email Confirmation page
+  - Simplified login flow with better user experience
+
+- **Email Confirmation Page Updates**:
+  - Updated page title from "Manual Token Confirmation" to "Email Confirmation"
+  - Removed instructional description paragraph
+  - Removed blue instruction box with token steps
+  - Streamlined interface for better usability
+
+- **Previous UI Improvements**:
+  - Removed "Send to WhatsApp" button from ProductDetail.tsx for cleaner interface
+  - Updated header styling in UserCreate.tsx and TemplateCreate.tsx
+  - Changed from `h1` to `h2` elements with consistent design
   - Replaced "Back" buttons with "Cancel" buttons
-  - Applied modern styling with proper spacing and colors
 
 ### Build Process Fixes
 - **Resolved build directory confusion**: 
@@ -27,8 +59,26 @@ A Chrome MV3 extension with side panel React app that integrates with WhatsApp W
   - Maintained browser-based compression in `imageCompression.ts` for frontend components
 
 ### Database Improvements
-- **Fixed RLS policies** for quick_reply_templates to allow anonymous access for preview generation
-- **Enhanced template preview functionality** for WhatsApp integration
+- **Schema Enhancements**:
+  - Added `user_id` columns to `users`, `variant_options`, and `product_variants` tables
+  - Implemented proper foreign key relationships to `auth.users(id)`
+  - Created comprehensive migration scripts for safe schema updates
+  - Enhanced data isolation and security through proper user associations
+
+- **Data Migration & Population**:
+  - Automated population of `user_id` values based on existing order relationships
+  - Created verification scripts to ensure data integrity
+  - Implemented fallback assignment for users without order history
+
+- **RLS Policy Updates**:
+  - Fixed RLS policies for quick_reply_templates to allow anonymous access for preview generation
+  - Enhanced template preview functionality for WhatsApp integration
+  - Improved security policies for user data access control
+
+### Project Organization
+- **Cleaned up root directory** by moving all development and testing scripts to `test-files/` folder
+- **Improved project structure** with better separation of core application files and utility scripts
+- **Enhanced maintainability** with organized script categorization (check, debug, fix, test, update, verify)
 
 ## Project Structure
 
@@ -41,6 +91,14 @@ src/
 ├── contexts/           # React contexts
 ├── lib/                # External library configurations
 └── sidepanel/          # Extension sidepanel implementation
+
+test-files/             # Development and testing scripts
+├── check-*.js          # Database and system check scripts
+├── debug-*.js          # Debugging utilities
+├── fix-*.js            # Bug fix and maintenance scripts
+├── test-*.js           # Testing scripts
+├── update-*.js         # Update and migration scripts
+└── verify-*.js         # Verification utilities
 ```
 
 ### Key Files
@@ -83,7 +141,12 @@ node scripts/batch-compress-images.js  # Batch compress images using Node.js
 
 3. **Database setup**:
    - Run database migration scripts in `database/` directory
+   - Execute user_id migration scripts:
+     - `add-user-id-to-users-table.sql`
+     - `run-add-user-id-to-users-migration.js`
+     - `populate-users-user-id.js`
    - Ensure RLS policies are properly configured
+   - Verify data integrity with `check-users-data-integrity.js`
 
 4. **Development**:
    ```bash
@@ -163,9 +226,21 @@ node scripts/batch-compress-images.js  # Batch compress images using Node.js
 - Check file size limits (300KB for WhatsApp)
 
 ### Database Issues
-- Verify RLS policies for template access
-- Check Supabase connection configuration
-- Ensure proper environment variables
+- **Schema Migration Issues**:
+  - If user_id columns are missing, run migration scripts in order
+  - Check foreign key constraints to auth.users table
+  - Verify data population completed successfully
+  - Use verification scripts to check data integrity
+
+- **Authentication & Data Access**:
+  - Verify RLS policies for template access
+  - Check user_id associations for proper data filtering
+  - Ensure Users.tsx displays all associated users correctly
+
+- **Connection & Configuration**:
+  - Check Supabase connection configuration
+  - Ensure proper environment variables
+  - Verify database permissions for migration scripts
 
 ## Contributing
 

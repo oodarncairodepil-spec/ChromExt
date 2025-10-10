@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { LocationPicker } from '../components/LocationPicker'
 import { LocationResult } from '../hooks/useLocationSearch'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { useAuth } from '../contexts/AuthContext'
 
 interface User {
   id: string;
@@ -32,6 +33,7 @@ interface Cart {
 const UserDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user: authUser } = useAuth()
   const [user, setUser] = useState<User | null>(null)
   const [userCarts, setUserCarts] = useState<Cart[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,20 +59,34 @@ const UserDetail: React.FC = () => {
   }, [id])
 
   const loadUserData = async () => {
+    if (!authUser) {
+      setError('Authentication required')
+      setLoading(false)
+      return
+    }
+
     try {
       setLoading(true)
       setError(null)
       
-      // Fetch user data
+      // Fetch user data - only if it belongs to the authenticated user
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
         .eq('id', id)
+        .eq('user_id', authUser.id)
         .single()
       
-      if (userError) throw userError
+      if (userError) {
+        if (userError.code === 'PGRST116') {
+          setError('User not found or access denied')
+        } else {
+          throw userError
+        }
+        return
+      }
       
-      // Fetch user's carts
+      // Fetch user's carts - also filter by authenticated user
       const { data: cartsData, error: cartsError } = await supabase
         .from('cart_items')
         .select('*')
@@ -117,7 +133,7 @@ const UserDetail: React.FC = () => {
   }
 
   const handleSave = async () => {
-    if (!user || !editForm) return
+    if (!user || !editForm || !authUser) return
     
     try {
       setSaving(true)
@@ -136,6 +152,7 @@ const UserDetail: React.FC = () => {
           updated_at: new Date().toISOString()
         })
         .eq('id', user.id)
+        .eq('user_id', authUser.id)
       
       if (error) throw error
       

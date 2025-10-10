@@ -36,14 +36,21 @@ const Products: React.FC = () => {
 
   useEffect(() => {
     const loadProducts = async () => {
+      if (!user) {
+        setError('Authentication required')
+        setLoading(false)
+        return
+      }
+
       try {
         setLoading(true)
         setError(null)
         
-        // Fetch products
+        // Fetch products - only for the authenticated user
         const { data: productsData, error: productsError } = await supabase
           .from('products')
           .select('*')
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false })
         
         if (productsError) throw productsError
@@ -76,7 +83,7 @@ const Products: React.FC = () => {
     }
 
     loadProducts()
-  }, [])
+  }, [user])
 
   // Filter products based on search term
   useEffect(() => {

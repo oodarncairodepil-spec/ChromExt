@@ -8,18 +8,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables')
 }
 
-// Use service role key for development to bypass RLS policies
-const isDevelopment = process.env.NODE_ENV === 'development' || process.env.PLASMO_TARGET?.includes('dev');
-const clientKey = isDevelopment && supabaseServiceKey ? supabaseServiceKey : supabaseAnonKey;
+// Always use anonymous key to enforce RLS policies
+// Service role key bypasses RLS and should only be used for admin operations
+const clientKey = supabaseAnonKey;
 
 // Debug logging
 console.log('🔧 Supabase Debug Info:');
 console.log('  - NODE_ENV:', process.env.NODE_ENV);
 console.log('  - PLASMO_TARGET:', process.env.PLASMO_TARGET);
-console.log('  - isDevelopment:', isDevelopment);
 console.log('  - Has service key:', !!supabaseServiceKey);
-console.log('  - Using service key:', isDevelopment && !!supabaseServiceKey);
-console.log('  - Client key type:', clientKey === supabaseServiceKey ? 'SERVICE' : 'ANON');
+console.log('  - Using anonymous key for RLS enforcement');
+console.log('  - Client key type: ANON');
 
 export const supabase = createClient(supabaseUrl, clientKey, {
   auth: {
@@ -37,15 +36,9 @@ export const supabase = createClient(supabaseUrl, clientKey, {
         localStorage.removeItem(key)
       }
     }
-  },
-  global: {
-    headers: {
-      'apikey': clientKey,
-      'Authorization': `Bearer ${clientKey}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal'
-    }
   }
+  // Removed hardcoded Authorization header to allow user JWT tokens
+  // Supabase will automatically handle authentication headers
 });
 
 // Admin client for storage operations (only create if service key is available)
@@ -200,9 +193,16 @@ const mockTemplates = [
 // Real Supabase data fetching functions
 export const fetchProducts = async () => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('No authenticated user found');
+      return [];
+    }
+
     const { data, error } = await supabase
       .from('products')
       .select('id, name, price, stock, status, description, sku, weight, is_digital, created_at, updated_at')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     
     if (error) throw error;
@@ -215,9 +215,16 @@ export const fetchProducts = async () => {
 
 export const fetchUsers = async () => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('No authenticated user found');
+      return [];
+    }
+
     const { data, error } = await supabase
       .from('users')
       .select('id, name, phone, address, city, district, full_address, note, label, cart_count, created_at, updated_at')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     
     if (error) throw error;
@@ -230,9 +237,16 @@ export const fetchUsers = async () => {
 
 export const fetchTemplates = async () => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('No authenticated user found');
+      return [];
+    }
+
     const { data, error } = await supabase
       .from('quick_reply_templates')
       .select('id, title, message, preview_content, image_url, image_name, is_active, usage_count, product_id, is_system, is_deletable, created_at, updated_at')
+      .eq('user_id', user.id)
       .eq('is_active', true)
       .order('usage_count', { ascending: false });
     
@@ -247,9 +261,16 @@ export const fetchTemplates = async () => {
 // Additional functions for cart and orders
 export const fetchCarts = async () => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('No authenticated user found');
+      return [];
+    }
+
     const { data, error } = await supabase
       .from('cart_items')
       .select('id, user_id, product_id, quantity, price, created_at, updated_at')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     
     if (error) throw error;
@@ -262,6 +283,12 @@ export const fetchCarts = async () => {
 
 export const fetchOrders = async () => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('No authenticated user found');
+      return [];
+    }
+
     const { data, error } = await supabase
       .from('orders')
       .select(`
@@ -278,6 +305,7 @@ export const fetchOrders = async () => {
         created_at, 
         updated_at
       `)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     
     if (error) throw error;

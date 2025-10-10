@@ -44,6 +44,11 @@ const Login: React.FC = () => {
     const { error } = await signIn(email, password);
     
     if (error) {
+      // Check if the error is due to unverified email
+      if (error.message.includes('Email not confirmed') || error.message.includes('email_not_confirmed')) {
+        navigate('/token-confirmation');
+        return;
+      }
       setError(error.message);
     } else {
       navigate('/users');

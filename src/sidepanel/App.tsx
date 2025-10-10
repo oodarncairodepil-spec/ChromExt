@@ -13,6 +13,7 @@ import Templates from '../pages/Templates'
 import Cart from '../pages/Cart'
 import Login from '../pages/Login'
 import Register from '../pages/Register'
+import TokenConfirmation from '../pages/TokenConfirmation'
 import ProductDetail from '../pages/ProductDetail'
 import ProductCreate from '../pages/ProductCreate'
 import UserDetail from '../pages/UserDetail'
@@ -43,6 +44,7 @@ const AuthenticatedApp: React.FC = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/token-confirmation" element={<TokenConfirmation />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
