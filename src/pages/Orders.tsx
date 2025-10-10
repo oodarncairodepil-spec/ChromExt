@@ -20,6 +20,7 @@ interface Order {
       code: string
       name: string
       type: string
+      logo_data?: string | null
     }
     service?: {
       id: string
@@ -30,6 +31,103 @@ interface Order {
 }
 
 // Component to display product image with fallback
+// Helper function to convert binary data to base64 image
+const getLogoSrc = (logoData: string | null): string | undefined => {
+  if (!logoData || logoData.trim() === '') {
+    return undefined;
+  }
+
+  // Handle direct URLs (prioritize new format)
+  if (logoData.startsWith('http://') || logoData.startsWith('https://') || logoData.startsWith('data:')) {
+    return logoData;
+  }
+
+  // Only try to decode legacy hex data if it's not a plain URL
+  try {
+    // Handle hex-encoded data starting with \x (single backslash)
+    if (logoData.startsWith('\\x')) {
+      // Remove the \x prefix and convert pairs of hex characters
+      const hexString = logoData.substring(2);
+      let decodedString = '';
+      for (let i = 0; i < hexString.length; i += 2) {
+        const hex = hexString.substr(i, 2);
+        decodedString += String.fromCharCode(parseInt(hex, 16));
+      }
+      
+      // If decoded string is a URL, return it directly
+      if (decodedString.startsWith('http://') || decodedString.startsWith('https://')) {
+        return decodedString;
+      }
+      
+      // Otherwise try to parse as JSON buffer
+      const bufferData = JSON.parse(decodedString);
+      if (bufferData.type === 'Buffer' && Array.isArray(bufferData.data)) {
+        const uint8Array = new Uint8Array(bufferData.data);
+        const base64String = btoa(String.fromCharCode(...uint8Array));
+        return `data:image/png;base64,${base64String}`;
+      }
+    }
+    
+    // Handle hex-encoded data with \\x prefix (double backslash)
+    if (logoData.includes('\\x')) {
+      // Convert hex string to regular string by replacing \\x sequences
+      const decodedString = logoData.replace(/\\x([0-9a-fA-F]{2})/g, (match, hex) => {
+        return String.fromCharCode(parseInt(hex, 16));
+      });
+      
+      // If decoded string is a URL, return it directly
+      if (decodedString.startsWith('http://') || decodedString.startsWith('https://')) {
+        return decodedString;
+      }
+      
+      // Otherwise try to parse as JSON buffer
+      const bufferData = JSON.parse(decodedString);
+      if (bufferData.type === 'Buffer' && Array.isArray(bufferData.data)) {
+        const uint8Array = new Uint8Array(bufferData.data);
+        const base64String = btoa(String.fromCharCode(...uint8Array));
+        return `data:image/png;base64,${base64String}`;
+      }
+    }
+  } catch (error) {
+    // Silently fail for legacy data parsing errors
+    console.warn('Could not parse legacy logo data, skipping:', logoData?.substring(0, 50));
+  }
+  
+  return undefined; // Don't show broken images
+};
+
+const CourierLogoDisplay: React.FC<{ courier: { id: string; code: string; name: string; logo_data?: string | null } }> = ({ courier }) => {
+  const logoSrc = getLogoSrc(courier.logo_data || null);
+  
+  if (logoSrc) {
+    return (
+      <div className="flex items-center space-x-2">
+        <img 
+          src={logoSrc} 
+          alt={courier.name} 
+          className="w-6 h-6 object-contain"
+          onError={(e) => {
+            // Fallback to text badge if image fails to load
+            const target = e.target as HTMLImageElement;
+            target.style.display = 'none';
+            const textBadge = target.nextElementSibling as HTMLElement;
+            if (textBadge) textBadge.style.display = 'block';
+          }}
+        />
+        <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium" style={{display: 'none'}}>
+          {courier.name.toUpperCase()}
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium">
+      {courier.name.toUpperCase()}
+    </div>
+  );
+};
+
 const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageError, setImageError] = useState(false)
@@ -248,8 +346,48 @@ const Orders: React.FC = () => {
         ) : undefined
       })) || []
 
-      setOrders(transformedOrders)
-      setFilteredOrders(transformedOrders)
+      // Get unique courier IDs from orders
+      const courierIds = [...new Set(
+        transformedOrders
+          .map(order => order.shipping_info?.courier?.id)
+          .filter(Boolean)
+      )] as string[]
+
+      // Fetch courier logo data if we have courier IDs
+      let courierLogos: { [key: string]: string | null } = {}
+      if (courierIds.length > 0) {
+        const { data: couriersData, error: couriersError } = await supabase
+          .from('shipping_couriers')
+          .select('id, logo_data')
+          .in('id', courierIds)
+
+        if (!couriersError && couriersData) {
+          courierLogos = couriersData.reduce((acc, courier) => {
+            acc[courier.id] = courier.logo_data
+            return acc
+          }, {} as { [key: string]: string | null })
+        }
+      }
+
+      // Merge logo data into orders
+      const ordersWithLogos = transformedOrders.map(order => {
+        if (order.shipping_info?.courier?.id && courierLogos[order.shipping_info.courier.id] !== undefined) {
+          return {
+            ...order,
+            shipping_info: {
+              ...order.shipping_info,
+              courier: {
+                ...order.shipping_info.courier,
+                logo_data: courierLogos[order.shipping_info.courier.id]
+              }
+            }
+          }
+        }
+        return order
+      })
+
+      setOrders(ordersWithLogos)
+      setFilteredOrders(ordersWithLogos)
     } catch (err: any) {
       console.error('Error loading orders:', err)
       setError(err.message || 'Failed to load orders')
@@ -313,37 +451,76 @@ const Orders: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'confirmed':
-        return 'bg-blue-100 text-blue-800'
+      case 'draft':
+      case 'new':
+        return 'bg-gray-100 text-gray-800'  // Grey
+      case 'paid':
+        return 'bg-blue-100 text-blue-800'  // Blue
+      case 'packaged':
       case 'shipped':
-        return 'bg-purple-100 text-purple-800'
+        return 'bg-yellow-100 text-yellow-800'  // Yellow
+      case 'completed':
       case 'delivered':
-        return 'bg-green-100 text-green-800'
+        return 'bg-green-100 text-green-800'  // Green
+      case 'return':
       case 'cancelled':
-        return 'bg-red-100 text-red-800'
+        return 'bg-red-100 text-red-800'  // Red
       default:
         return 'bg-gray-100 text-gray-800'
     }
   }
 
-  const handleEditInCart = (order: Order) => {
+  const handleEditInCart = async (order: Order) => {
+    console.log('🔄 Starting edit order process for order:', order.id)
+    console.log('📋 Order data received:', order)
+    
     try {
+      // Fetch complete order details including customer address
+      console.log('🔍 Fetching complete order details from database...')
+      const { data: fullOrder, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          shipping_info,
+          payment_method_id
+        `)
+        .eq('id', order.id)
+        .single()
+
+      if (error) {
+        console.error('❌ Error fetching order details:', error)
+        alert('Error loading order details for editing')
+        return
+      }
+
+      console.log('✅ Complete order details fetched:', fullOrder)
+      
       // Store order data in localStorage for cart to load
       const editOrderData = {
-        customerName: order.customer_name,
-        customerPhone: order.customer_phone,
-        customerAddress: '', // We don't have address in the orders list
-        items: order.items || []
+        orderId: fullOrder.id,
+        orderNumber: fullOrder.order_number,
+        customerName: fullOrder.customer_name,
+        customerPhone: fullOrder.customer_phone,
+        customerAddress: fullOrder.customer_address || '',
+        customer_city: fullOrder.customer_city,
+        customer_district: fullOrder.customer_district,
+        items: fullOrder.items || [],
+        shippingInfo: fullOrder.shipping_info || null,
+        paymentMethodId: fullOrder.payment_method_id || null,
+        shipping_fee: fullOrder.shipping_fee,
+        discount: fullOrder.discount,
+        totalAmount: fullOrder.total_amount,
+        status: fullOrder.status
       }
       
+      console.log('💾 Storing edit order data in localStorage:', editOrderData)
       localStorage.setItem('editOrderData', JSON.stringify(editOrderData))
       
+      console.log('🚀 Navigating to cart page in edit mode...')
       // Navigate to cart with edit mode
       navigate('/cart?mode=edit')
     } catch (error) {
-      console.error('Error preparing order for edit:', error)
+      console.error('❌ Error preparing order for edit:', error)
       alert('Error loading order for editing')
     }
   }
@@ -487,15 +664,10 @@ const Orders: React.FC = () => {
                     <h3 className="text-sm font-semibold text-green-600">#{order.order_number}</h3>
                     <p className="text-xs text-gray-500 mt-1">{formatDate(order.created_at)}</p>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                    order.status === 'draft' ? 'bg-yellow-100 text-yellow-800' :
-                    order.status === 'pending' ? 'bg-orange-100 text-orange-800' :
-                    order.status === 'completed' ? 'bg-green-100 text-green-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
                     {order.status === 'draft' ? 'Pembayaran Tertunda' :
                      order.status === 'pending' ? 'Lunas' :
-                     order.status === 'completed' ? 'Selesai' :
+                     order.status === 'completed' ? 'Completed' :
                      order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                   </span>
                 </div>
@@ -512,9 +684,7 @@ const Orders: React.FC = () => {
                   </div>
                   <div className="flex items-center space-x-2">
                     {order.shipping_info?.courier ? (
-                      <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium">
-                        {order.shipping_info.courier.name.toUpperCase()}
-                      </div>
+                      <CourierLogoDisplay courier={order.shipping_info.courier} />
                     ) : (
                       <div className="bg-gray-400 text-white px-2 py-1 rounded text-xs font-medium">
                         NO COURIER
@@ -527,7 +697,7 @@ const Orders: React.FC = () => {
 
                 {/* Action buttons */}
                 <div className="flex items-center justify-between">
-                  {order.status.toLowerCase() !== 'paid' && (
+                  {(order.status.toLowerCase() === 'new' || order.status.toLowerCase() === 'draft') && (
                     <button 
                       onClick={() => handleEditInCart(order)}
                       className="text-sm text-gray-600 hover:text-gray-800"

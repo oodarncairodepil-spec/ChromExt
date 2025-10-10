@@ -23,6 +23,7 @@ import Profile from '../pages/Profile'
 import PaymentMethod from '../pages/PaymentMethod'
 import ShippingCourier from '../pages/ShippingCourier'
 import Test from '../pages/Test'
+import AuthCallback from '../pages/AuthCallback'
 import Loading from '../components/Loading'
 
 export type TabType = 'home' | 'products' | 'orders' | 'templates' | 'cart'
@@ -42,6 +43,7 @@ const AuthenticatedApp: React.FC = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )

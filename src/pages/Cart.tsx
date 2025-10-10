@@ -85,6 +85,7 @@ interface Courier {
   has_pickup: boolean
   cutoff_time?: string
   is_active: boolean
+  logo_data?: string | null
 }
 
 interface CourierService {
@@ -109,6 +110,103 @@ interface ServicePreference {
   service_id: string
   is_enabled: boolean
 }
+
+// Helper function to parse logo data (same as in Orders.tsx)
+const getLogoSrc = (logoData: string | null): string | undefined => {
+  if (!logoData) return undefined;
+  
+  // Check if it's already a URL
+  if (logoData.startsWith('http') || logoData.startsWith('data:')) {
+    return logoData;
+  }
+  
+  try {
+    // Check if it's hex-encoded data (starts with \x)
+    if (logoData.startsWith('\\x')) {
+      // Convert hex string to regular string
+      const hexString = logoData.slice(2); // Remove \x prefix
+      const decodedString = hexString.replace(/([0-9a-f]{2})/gi, (match, hex) => {
+        return String.fromCharCode(parseInt(hex, 16));
+      });
+      
+      // Parse the decoded JSON
+      const bufferData = JSON.parse(decodedString);
+      if (bufferData.type === 'Buffer' && Array.isArray(bufferData.data)) {
+        const uint8Array = new Uint8Array(bufferData.data);
+        const base64String = btoa(String.fromCharCode(...uint8Array));
+        return `data:image/png;base64,${base64String}`;
+      }
+    }
+    
+    // Handle raw hex data without \x prefix
+    if (/^[0-9a-f]+$/i.test(logoData) && logoData.length > 20) {
+      try {
+        const decodedString = logoData.replace(/([0-9a-f]{2})/gi, (match, hex) => {
+          return String.fromCharCode(parseInt(hex, 16));
+        });
+        const bufferData = JSON.parse(decodedString);
+        if (bufferData.type === 'Buffer' && Array.isArray(bufferData.data)) {
+          const uint8Array = new Uint8Array(bufferData.data);
+          const base64String = btoa(String.fromCharCode(...uint8Array));
+          return `data:image/png;base64,${base64String}`;
+        }
+      } catch (hexError) {
+        // Continue to next parsing method
+      }
+    }
+    
+    // Try parsing as direct JSON (fallback for previous format)
+    const bufferData = JSON.parse(logoData);
+    if (bufferData.type === 'Buffer' && Array.isArray(bufferData.data)) {
+      const uint8Array = new Uint8Array(bufferData.data);
+      const base64String = btoa(String.fromCharCode(...uint8Array));
+      return `data:image/png;base64,${base64String}`;
+    }
+  } catch (error) {
+    console.error('Error parsing logo data:', error, 'Data preview:', logoData?.substring(0, 100));
+  }
+  
+  return undefined; // Don't show broken images
+};
+
+// Custom courier option component
+const CourierOption: React.FC<{ courier: Courier; isSelected: boolean; onClick: () => void }> = ({ courier, isSelected, onClick }) => {
+  const logoSrc = getLogoSrc(courier.logo_data || null);
+  
+  return (
+    <div 
+      onClick={onClick}
+      className={`flex items-center space-x-3 p-3 cursor-pointer hover:bg-gray-50 ${
+        isSelected ? 'bg-blue-50 border-blue-200' : 'border-gray-200'
+      } border rounded-lg mb-2`}
+    >
+      <div className="flex-shrink-0">
+        <div className="w-8 h-8 bg-gray-200 rounded flex items-center justify-center overflow-hidden">
+          {logoSrc ? (
+            <img 
+              src={logoSrc} 
+              alt={`${courier.name} logo`} 
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                target.nextElementSibling!.textContent = courier.name.charAt(0);
+              }}
+            />
+          ) : (
+            <span className="text-xs font-medium text-gray-600">
+              {courier.name.charAt(0)}
+            </span>
+          )}
+          <span className="text-xs font-medium text-gray-600" style={{ display: 'none' }}></span>
+        </div>
+      </div>
+      <div className="flex-1">
+        <div className="text-sm font-medium text-gray-900">{courier.name}</div>
+      </div>
+    </div>
+  );
+};
 
 const Cart: React.FC = () => {
   const { user } = useAuth()
@@ -156,6 +254,25 @@ const Cart: React.FC = () => {
   // 2-phase courier selection state
   const [selectedCourier, setSelectedCourier] = useState<Courier | null>(null)
   const [selectedService, setSelectedService] = useState<CourierService | null>(null)
+  const [showCourierDropdown, setShowCourierDropdown] = useState(false)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.courier-dropdown')) {
+        setShowCourierDropdown(false);
+      }
+    };
+
+    if (showCourierDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showCourierDropdown]);
   
   // Shipping fee state
   const [shippingFee, setShippingFee] = useState<number>(0)
@@ -200,15 +317,24 @@ const Cart: React.FC = () => {
   }
 
   useEffect(() => {
-    loadCartItems()
+    const mode = searchParams.get('mode')
+    
+    // Only load cart items from database if not in edit mode
+    if (mode !== 'edit') {
+      loadCartItems()
+    }
+    
     loadProvinces()
     loadPaymentMethods()
     loadCourierData()
     
     // Check if we're in edit mode
-    const mode = searchParams.get('mode')
     if (mode === 'edit') {
-      loadEditOrderData()
+      loadEditOrderData().catch(error => {
+        console.error('Failed to load edit order data:', error)
+        setError('Failed to load order data for editing')
+        setLoading(false)
+      })
     } else {
       loadPersistedData()
     }
@@ -221,14 +347,21 @@ const Cart: React.FC = () => {
     }
   }, [manualBuyerPhone, manualBuyerName, manualBuyerAddress, manualBuyerCityDistrict, selectedBuyerLocation, shippingDestination, selectedShipping, discountType, discountValue, selectedBuyer, buyerSearch, user])
 
-  // Check for existing draft when buyer phone changes
+  // Check for existing draft when buyer phone changes (skip in edit mode)
   useEffect(() => {
+    const mode = searchParams.get('mode')
+    if (mode === 'edit') {
+      // Skip draft checking in edit mode - we already have the order ID
+      console.log('🔄 Skipping draft check in edit mode')
+      return
+    }
+    
     if (user && manualBuyerPhone.trim()) {
       checkExistingDraft(manualBuyerPhone.trim())
     } else {
       setExistingDraftId(null)
     }
-  }, [manualBuyerPhone, user])
+  }, [manualBuyerPhone, user, searchParams])
 
   // Debug checkout button state
   useEffect(() => {
@@ -267,20 +400,140 @@ const Cart: React.FC = () => {
   }
 
   // Load edit order data from localStorage
-  const loadEditOrderData = () => {
+  const loadEditOrderData = async () => {
     try {
+      setLoading(true)
+      setError(null)
+      
       const editOrderData = localStorage.getItem('editOrderData')
       if (editOrderData) {
         const orderData = JSON.parse(editOrderData)
-        console.log('Loading edit order data:', orderData)
+        console.log('🔄 Loading edit order data in Cart:', orderData)
         
         // Pre-fill customer information
+        console.log('📝 Setting customer information...')
         setManualBuyerName(orderData.customerName || '')
         setManualBuyerPhone(orderData.customerPhone || '')
         setManualBuyerAddress(orderData.customerAddress || '')
         
+        // Set customer city and district if available
+        if (orderData.customer_city && orderData.customer_district) {
+          console.log('🏙️ Setting customer city and district:', orderData.customer_city, orderData.customer_district)
+          
+          // Debug environment variables and Supabase configuration
+          console.log('🔧 Environment variables debug:');
+          console.log('  - NODE_ENV:', process.env.NODE_ENV || 'MISSING');
+          console.log('  - PLASMO_TARGET:', process.env.PLASMO_TARGET || 'MISSING');
+          console.log('  - PLASMO_PUBLIC_SUPABASE_URL:', process.env.PLASMO_PUBLIC_SUPABASE_URL || 'MISSING');
+          console.log('  - PLASMO_PUBLIC_SUPABASE_ANON_KEY:', process.env.PLASMO_PUBLIC_SUPABASE_ANON_KEY ? `${process.env.PLASMO_PUBLIC_SUPABASE_ANON_KEY.substring(0, 20)}...` : 'MISSING');
+          console.log('  - PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY:', process.env.PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ? `${process.env.PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY.substring(0, 20)}...` : 'MISSING');
+          console.log('🔧 Supabase client exists:', !!supabase);
+          console.log('🔧 Supabase from method exists:', !!supabase.from);
+          
+          try {
+            console.log('🔍 Attempting to fetch city name for ID:', orderData.customer_city);
+            console.log('🔧 Environment variables check:', {
+              NODE_ENV: process.env.NODE_ENV,
+              PLASMO_TARGET: process.env.PLASMO_TARGET,
+              hasSupabaseUrl: !!process.env.PLASMO_PUBLIC_SUPABASE_URL,
+              hasAnonKey: !!process.env.PLASMO_PUBLIC_SUPABASE_ANON_KEY,
+              hasServiceKey: !!process.env.PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY,
+              supabaseUrlLength: process.env.PLASMO_PUBLIC_SUPABASE_URL?.length || 0,
+              anonKeyLength: process.env.PLASMO_PUBLIC_SUPABASE_ANON_KEY?.length || 0,
+              serviceKeyLength: process.env.PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY?.length || 0
+            });
+            
+            // Fetch city name
+            const cityResponse = await supabase
+              .from('regencies')
+              .select('name')
+              .eq('id', orderData.customer_city)
+              .single();
+            
+            console.log('🏙️ City query response:', cityResponse);
+            
+            console.log('🔍 Attempting to fetch district name for ID:', orderData.customer_district);
+            // Fetch district name
+            const districtResponse = await supabase
+              .from('districts')
+              .select('name')
+              .eq('id', orderData.customer_district)
+              .single();
+            
+            console.log('🏘️ District query response:', districtResponse);
+            
+            if (cityResponse.data && districtResponse.data) {
+              console.log('✅ Resolved city/district names:', districtResponse.data.name, cityResponse.data.name)
+              
+              // Fetch province information for complete LocationResult
+              const { data: provinceData } = await supabase
+                .from('provinces')
+                .select('id, name')
+                .eq('id', Math.floor(orderData.customer_city / 100)) // Province ID is first 2 digits of city ID
+                .single();
+              
+              const locationText = `${districtResponse.data.name}, ${cityResponse.data.name}`;
+              setManualBuyerCityDistrict(locationText);
+              
+              // Create LocationResult object for LocationPicker
+              if (provinceData) {
+                const locationResult: LocationResult = {
+                  district_id: orderData.customer_district,
+                  district_name: districtResponse.data.name,
+                  city_id: orderData.customer_city,
+                  city_name: cityResponse.data.name,
+                  province_id: provinceData.id,
+                  province_name: provinceData.name,
+                  qtext: locationText,
+                  score: 1.0
+                };
+                setSelectedBuyerLocation(locationResult);
+                console.log('🎯 Created LocationResult for picker:', locationResult);
+              }
+            } else {
+              console.warn('⚠️ Could not resolve city/district names, using IDs')
+              console.warn('City response:', cityResponse);
+              console.warn('District response:', districtResponse);
+              setManualBuyerCityDistrict(`${orderData.customer_district}, ${orderData.customer_city}`);
+            }
+          } catch (error) {
+            console.warn('❌ Failed to resolve city/district names:', error);
+            console.warn('Error details:', JSON.stringify(error, null, 2));
+            // Fallback to IDs if name resolution fails
+            setManualBuyerCityDistrict(`${orderData.customer_district}, ${orderData.customer_city}`);
+          }
+        }
+        
+        // Set shipping information if available
+        if (orderData.shippingInfo) {
+          console.log('🚚 Setting shipping information:', orderData.shippingInfo)
+          if (orderData.shippingInfo.courier) {
+            setSelectedCourier(orderData.shippingInfo.courier)
+          }
+          if (orderData.shippingInfo.service) {
+            setSelectedService(orderData.shippingInfo.service)
+          }
+          if (orderData.shippingInfo.destination) {
+            setShippingDestination(orderData.shippingInfo.destination)
+          }
+        }
+        
+        // Set payment method if available
+        if (orderData.paymentMethodId) {
+          console.log('💳 Setting payment method ID:', orderData.paymentMethodId)
+          // Find the payment method by ID from the loaded payment methods
+          const paymentMethod = paymentMethods.find(pm => pm.id === orderData.paymentMethodId)
+          if (paymentMethod) {
+            console.log('💳 Found payment method:', paymentMethod)
+            setSelectedPaymentMethod(paymentMethod)
+          } else {
+            console.log('⚠️ Payment method not found for ID:', orderData.paymentMethodId)
+          }
+        }
+        
         // Convert order items to cart items format
         if (orderData.items && Array.isArray(orderData.items)) {
+          console.log('📦 Converting order items to cart format:', orderData.items)
           const editCartItems = orderData.items.map((item: any, index: number) => ({
             id: `edit_${index}`,
             user_id: user?.id || '',
@@ -297,14 +550,48 @@ const Cart: React.FC = () => {
             }
           }))
           
+          console.log('✅ Cart items set:', editCartItems)
           setCartItems(editCartItems)
         }
         
+        // Set discount information if available
+        if (orderData.discount) {
+          console.log('💰 Setting discount information:', orderData.discount)
+          const discount = typeof orderData.discount === 'string' ? JSON.parse(orderData.discount) : orderData.discount
+          if (discount.type && discount.value) {
+            setDiscountType(discount.type)
+            setDiscountValue(discount.value)
+          }
+        }
+        
+        // Set shipping fee if available
+        if (orderData.shipping_fee) {
+          console.log('🚚 Setting shipping fee:', orderData.shipping_fee)
+          const fee = parseFloat(orderData.shipping_fee) || 0
+          setShippingFee(fee)
+          setShippingFeeDisplay(fee.toString())
+        }
+        
+        // Set existing draft ID if this is an existing order
+        if (orderData.orderId) {
+          console.log('🔗 Setting existing draft ID:', orderData.orderId)
+          setExistingDraftId(orderData.orderId)
+        }
+        
+        console.log('🧹 Clearing edit order data from localStorage')
         // Clear the edit order data from localStorage after loading
         localStorage.removeItem('editOrderData')
+        
+        console.log('✅ Edit order data loaded successfully!')
+      } else {
+        console.log('⚠️ No edit order data found in localStorage')
+        setError('No order data found for editing')
       }
     } catch (error) {
-      console.error('Error loading edit order data:', error)
+      console.error('❌ Error loading edit order data:', error)
+      setError('Failed to load order data for editing')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -387,10 +674,9 @@ const Cart: React.FC = () => {
           .eq('customer_phone', phoneFormat)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single()
         
-        if (data && !queryError) {
-          existingDraft = data
+        if (data && data.length > 0 && !queryError) {
+          existingDraft = data[0]
           break
         }
         error = queryError
@@ -1298,7 +1584,7 @@ const Cart: React.FC = () => {
       // Try to load couriers from database
       const { data: couriersData, error: couriersError } = await supabase
         .from('shipping_couriers')
-        .select('*')
+        .select('*, logo_data')
         .eq('is_active', true)
         .order('name')
       
@@ -1394,7 +1680,9 @@ const Cart: React.FC = () => {
   const getAvailableServices = (): CourierService[] => {
     if (!selectedCourier) return []
     return courierServices.filter(service => 
-      service.courier_id === selectedCourier.id && service.is_active
+      service.courier_id === selectedCourier.id && 
+      service.is_active && 
+      getServicePreference(service.id)
     )
   }
 
@@ -1452,6 +1740,29 @@ const Cart: React.FC = () => {
     }
   }
 
+  // Get courier preference (similar to ShippingCourier.tsx)
+  const getCourierPreference = (courierId: string): boolean => {
+    const pref = courierPreferences.find(p => {
+      if (!p) {
+        console.warn('getCourierPreference: Found null/undefined preference in array');
+        return false;
+      }
+      if (!p.courier_id) {
+        console.warn('getCourierPreference: Found preference with null/undefined courier_id:', p);
+        return false;
+      }
+      return p.courier_id === courierId;
+    });
+    
+    return pref?.is_enabled ?? true;
+  };
+
+  // Get service preference (similar to ShippingCourier.tsx)
+  const getServicePreference = (serviceId: string): boolean => {
+    const pref = servicePreferences.find(p => p && p.service_id === serviceId);
+    return pref?.is_enabled ?? true;
+  };
+
   // Get enabled couriers based on user preferences
   const getEnabledCouriers = () => {
     // If a courier is selected, use only that courier
@@ -1463,6 +1774,13 @@ const Cart: React.FC = () => {
     return couriers
       .filter(courier => courier.is_active)
       .map(courier => courier.code)
+  }
+
+  // Get filtered couriers for dropdown (respects user preferences)
+  const getFilteredCouriersForDropdown = () => {
+    return couriers.filter(courier => {
+      return courier.is_active && getCourierPreference(courier.id);
+    });
   }
 
   const subtotalAmount = cartItems.reduce((sum, item) => {
@@ -1783,26 +2101,76 @@ const Cart: React.FC = () => {
               <span className="ml-2 text-sm text-gray-600">Loading couriers...</span>
             </div>
           ) : (
-            <select
-              value={selectedCourier?.id || ''}
-              onChange={(e) => {
-                const courier = couriers.find(c => c.id === e.target.value)
-                if (courier) {
-                  handleCourierSelection(courier)
-                } else {
-                  setSelectedCourier(null)
-                  setSelectedService(null)
-                }
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Choose a courier...</option>
-              {couriers.filter(courier => courier.is_active).map((courier) => (
-                <option key={courier.id} value={courier.id}>
-                  {courier.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative courier-dropdown">
+              {/* Custom Dropdown Button */}
+              <button
+                type="button"
+                onClick={() => setShowCourierDropdown(!showCourierDropdown)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-left flex items-center justify-between"
+              >
+                <div className="flex items-center space-x-3">
+                  {selectedCourier ? (
+                    <>
+                      <div className="flex-shrink-0">
+                        <div className="w-6 h-6 bg-gray-200 rounded flex items-center justify-center overflow-hidden">
+                          {getLogoSrc(selectedCourier.logo_data || null) ? (
+                            <img 
+                              src={getLogoSrc(selectedCourier.logo_data || null)} 
+                              alt={`${selectedCourier.name} logo`} 
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                target.nextElementSibling!.textContent = selectedCourier.name.charAt(0);
+                              }}
+                            />
+                          ) : (
+                            <span className="text-xs font-medium text-gray-600">
+                              {selectedCourier.name.charAt(0)}
+                            </span>
+                          )}
+                          <span className="text-xs font-medium text-gray-600" style={{ display: 'none' }}></span>
+                        </div>
+                      </div>
+                      <span className="text-sm font-medium text-gray-900">{selectedCourier.name}</span>
+                    </>
+                  ) : (
+                    <span className="text-gray-500">Choose a courier...</span>
+                  )}
+                </div>
+                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* Dropdown Options */}
+              {showCourierDropdown && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                  <div className="p-2">
+                    <CourierOption
+                      courier={{ id: '', name: 'Choose a courier...', code: '', type: '', has_cod: false, has_insurance: false, min_weight: 0, min_cost: 0, has_pickup: false, is_active: true, logo_data: null }}
+                      isSelected={!selectedCourier}
+                      onClick={() => {
+                        setSelectedCourier(null);
+                        setSelectedService(null);
+                        setShowCourierDropdown(false);
+                      }}
+                    />
+                    {getFilteredCouriersForDropdown().map((courier) => (
+                      <CourierOption
+                        key={courier.id}
+                        courier={courier}
+                        isSelected={selectedCourier?.id === courier.id}
+                        onClick={() => {
+                          handleCourierSelection(courier);
+                          setShowCourierDropdown(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {couriers.length === 0 && !loadingCouriers && (
             <div className="text-sm text-gray-500 mt-1">

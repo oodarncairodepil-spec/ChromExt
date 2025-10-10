@@ -25,7 +25,7 @@ export const supabase = createClient(supabaseUrl, clientKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: true,
     storage: {
       getItem: (key: string) => {
         return localStorage.getItem(key)
@@ -37,6 +37,14 @@ export const supabase = createClient(supabaseUrl, clientKey, {
         localStorage.removeItem(key)
       }
     }
+  },
+  global: {
+    headers: {
+      'apikey': clientKey,
+      'Authorization': `Bearer ${clientKey}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal'
+    }
   }
 });
 
@@ -46,6 +54,14 @@ const supabaseAdmin = supabaseServiceKey
       auth: {
         autoRefreshToken: false,
         persistSession: false
+      },
+      global: {
+        headers: {
+          'apikey': supabaseServiceKey,
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        }
       }
     })
   : null;

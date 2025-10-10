@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verification - Chrome Extension</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background-color: #f9fafb;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            max-width: 400px;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            text-align: center;
+        }
+        .icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .icon.loading {
+            background-color: #dbeafe;
+            color: #3b82f6;
+        }
+        .icon.success {
+            background-color: #dcfce7;
+            color: #16a34a;
+        }
+        .icon.error {
+            background-color: #fee2e2;
+            color: #dc2626;
+        }
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #e5e7eb;
+            border-top: 2px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #111827;
+            margin: 0 0 0.5rem;
+        }
+        p {
+            color: #6b7280;
+            font-size: 0.875rem;
+            margin: 0 0 1.5rem;
+            line-height: 1.5;
+        }
+        .button {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        .button:hover {
+            background-color: #2563eb;
+        }
+        .small-text {
+            font-size: 0.75rem;
+            color: #9ca3af;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loading-state">
+            <div class="icon loading">
+                <div class="spinner"></div>
+            </div>
+            <h1>Verifying your account...</h1>
+            <p>Please wait while we verify your email address.</p>
+        </div>
+
+        <div id="success-state" style="display: none;">
+            <div class="icon success">
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <h1>Email Verified!</h1>
+            <p id="success-message">Your account has been verified successfully.</p>
+            <p class="small-text">You can now close this window and return to the Chrome extension.</p>
+        </div>
+
+        <div id="error-state" style="display: none;">
+            <div class="icon error">
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </div>
+            <h1>Verification Failed</h1>
+            <p id="error-message">Authentication failed. Please try again.</p>
+            <a href="#" class="button" onclick="window.close(); return false;">Close Window</a>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import Supabase client
+        import { createClient } from 'https://cdn.skypack.dev/@supabase/supabase-js@2';
+
+        // Initialize Supabase client
+        const supabaseUrl = 'https://oeikkeghjcclwgqzsvou.supabase.co';
+        const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9laWtrZWdoamNjbHdncXpzdm91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg5NDU3MzEsImV4cCI6MjA3NDUyMTczMX0.TQqSF0jGVaJOVQqSF0jGVaJOVQqSF0jGVaJOVQqSF0jGVaJOVQqSF0jGVaJOVQqSF0jGVaJOVQqSF0jGVaJOVQ';
+        
+        const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+            auth: {
+                detectSessionInUrl: true,
+                persistSession: false
+            }
+        });
+
+        async function handleAuthCallback() {
+            try {
+                // Get the URL hash parameters
+                const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                const accessToken = hashParams.get('access_token');
+                const refreshToken = hashParams.get('refresh_token');
+                const tokenType = hashParams.get('token_type');
+                const expiresIn = hashParams.get('expires_in');
+                const type = hashParams.get('type');
+
+                if (!accessToken || !refreshToken) {
+                    throw new Error('Missing authentication tokens');
+                }
+
+                // Set the session in Supabase
+                const { data, error } = await supabase.auth.setSession({
+                    access_token: accessToken,
+                    refresh_token: refreshToken
+                });
+
+                if (error) {
+                    throw error;
+                }
+
+                if (data.user) {
+                    // Show success state
+                    document.getElementById('loading-state').style.display = 'none';
+                    document.getElementById('success-state').style.display = 'block';
+                    document.getElementById('success-message').textContent = 
+                        `Welcome ${data.user.email}! Your account has been verified successfully.`;
+                    
+                    // Try to communicate with Chrome extension if available
+                    if (typeof chrome !== 'undefined' && chrome.runtime) {
+                        try {
+                            chrome.runtime.sendMessage({
+                                type: 'AUTH_SUCCESS',
+                                user: data.user,
+                                session: {
+                                    access_token: accessToken,
+                                    refresh_token: refreshToken,
+                                    expires_in: parseInt(expiresIn || '3600'),
+                                    token_type: tokenType || 'bearer'
+                                }
+                            });
+                        } catch (e) {
+                            console.log('Chrome extension communication not available');
+                        }
+                    }
+                    
+                    // Auto-close after 5 seconds
+                    setTimeout(() => {
+                        window.close();
+                    }, 5000);
+                } else {
+                    throw new Error('No user data received');
+                }
+            } catch (error) {
+                console.error('Auth callback error:', error);
+                
+                // Show error state
+                document.getElementById('loading-state').style.display = 'none';
+                document.getElementById('error-state').style.display = 'block';
+                document.getElementById('error-message').textContent = 
+                    error.message || 'Authentication failed. Please try again.';
+            }
+        }
+
+        // Handle the authentication callback when the page loads
+        if (window.location.hash) {
+            handleAuthCallback();
+        } else {
+            // No hash parameters, show error
+            document.getElementById('loading-state').style.display = 'none';
+            document.getElementById('error-state').style.display = 'block';
+            document.getElementById('error-message').textContent = 'No authentication data found in URL.';
+        }
+    </script>
+</body>
+</html>

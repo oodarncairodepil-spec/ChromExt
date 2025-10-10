@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatPhoneNumber } from '../utils/phoneFormatter'
 import InvoiceModal from '../components/InvoiceModal'
+import Dialog from '../components/Dialog'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { compressImage } from '../utils/imageCompression'
 
 interface OrderItem {
@@ -31,7 +33,7 @@ interface Order {
   }
   created_at: string
   items: OrderItem[]
-  payment_method?: {
+  payment_method_id?: {
     bank_name: string
     bank_account_number: string
     bank_account_owner_name: string
@@ -162,6 +164,14 @@ const OrderDetail: React.FC = () => {
   const [updating, setUpdating] = useState(false)
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [uploadingProof, setUploadingProof] = useState(false)
+  
+  // Dialog states
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [showWarningDialog, setShowWarningDialog] = useState(false)
+  const [warningAction, setWarningAction] = useState<string | null>(null)
+  const [showPaymentProofDialog, setShowPaymentProofDialog] = useState(false)
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null)
 
   useEffect(() => {
     const fetchOrder = async () => {
@@ -176,7 +186,7 @@ const OrderDetail: React.FC = () => {
           .from('orders')
           .select(`
             *,
-            payment_method:payment_methods(
+            payment_method_id:payment_methods(
               bank_name,
               bank_account_number,
               bank_account_owner_name
@@ -214,22 +224,18 @@ const OrderDetail: React.FC = () => {
     switch (status.toLowerCase()) {
       case 'draft':
       case 'new':
-        return 'bg-gray-100 text-gray-800'
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800'
+        return 'bg-gray-100 text-gray-800'  // Grey
       case 'paid':
-        return 'bg-green-100 text-green-800'
-      case 'processing':
-        return 'bg-blue-100 text-blue-800'
+        return 'bg-blue-100 text-blue-800'  // Blue
+      case 'packaged':
       case 'shipped':
-        return 'bg-purple-100 text-purple-800'
+        return 'bg-yellow-100 text-yellow-800'  // Yellow
       case 'completed':
       case 'delivered':
-        return 'bg-green-100 text-green-800'
+        return 'bg-green-100 text-green-800'  // Green
       case 'return':
-        return 'bg-orange-100 text-orange-800'
       case 'cancelled':
-        return 'bg-red-100 text-red-800'
+        return 'bg-red-100 text-red-800'  // Red
       default:
         return 'bg-gray-100 text-gray-800'
     }
@@ -274,31 +280,106 @@ const OrderDetail: React.FC = () => {
     // Validate transition
     const allowedStatuses = getNextStatuses(order.status)
     if (!allowedStatuses.includes(newStatus.toLowerCase())) {
-      alert(`Cannot change status from ${order.status} to ${newStatus}`)
+      setSuccessMessage(`Cannot change status from ${order.status} to ${newStatus}`)
+      setShowSuccessDialog(true)
       return
     }
     
+    // Show warning dialog for Cancelled or Return status
+    if (newStatus.toLowerCase() === 'cancelled' || newStatus.toLowerCase() === 'return') {
+      setWarningAction(newStatus.toLowerCase())
+      setShowWarningDialog(true)
+      return
+    }
+
+    // Show payment proof dialog for Paid status
+    if (newStatus.toLowerCase() === 'paid') {
+      setShowPaymentProofDialog(true)
+      return
+    }
+
+    // Proceed with normal status update
+    await updateOrderStatus(newStatus.toLowerCase())
+  }
+
+  const updateOrderStatus = async (newStatus: string) => {
+    if (!order) return
+
     setUpdating(true)
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ status: newStatus.toLowerCase() })
+        .update({ status: newStatus })
         .eq('id', order.id)
       
       if (error) {
         console.error('Error updating order status:', error)
-        alert('Failed to update order status. Please try again.')
+        setSuccessMessage('Failed to update order status. Please try again.')
+        setShowSuccessDialog(true)
       } else {
         // Update local state
-        setOrder({ ...order, status: newStatus.toLowerCase() })
-        alert(`Order status updated to ${getStatusDisplayName(newStatus)} successfully!`)
+        setOrder({ ...order, status: newStatus })
+        setSuccessMessage(`Order status updated to ${getStatusDisplayName(newStatus)} successfully!`)
+        setShowSuccessDialog(true)
       }
     } catch (error) {
       console.error('Error updating order status:', error)
-      alert('Failed to update order status. Please try again.')
+      setSuccessMessage('Failed to update order status. Please try again.')
+      setShowSuccessDialog(true)
     } finally {
       setUpdating(false)
     }
+  }
+
+  const handleWarningConfirm = async () => {
+    if (warningAction) {
+      await updateOrderStatus(warningAction)
+      setWarningAction(null)
+    }
+  }
+
+  const handlePaymentProofSubmit = async (skipUpload: boolean = false) => {
+    if (!skipUpload && paymentProofFile) {
+      // Upload payment proof first
+      await handlePaymentProofUpload(paymentProofFile)
+    }
+    // Then update status to paid
+    await updateOrderStatus('paid')
+    setPaymentProofFile(null)
+  }
+
+  const handleEditInCart = () => {
+    if (!order) return
+
+    // Prepare order data for editing
+    const editOrderData = {
+      id: order.id,
+      customer_name: order.customer_name,
+      customer_phone: order.customer_phone,
+      customer_address: order.customer_address,
+      items: order.items,
+      courier: order.shipping_info?.courier,
+      courier_service: order.shipping_info?.service,
+      shipping_cost: order.shipping_info?.cost || order.shipping_fee,
+      discount: order.discount,
+      total: order.total_amount,
+      payment_method: order.payment_method_id,
+      bank_name: order.payment_method_id?.bank_name,
+      account_number: order.payment_method_id?.bank_account_number,
+      account_holder: order.payment_method_id?.bank_account_owner_name
+    }
+
+    // Store in localStorage
+    localStorage.setItem('editOrderData', JSON.stringify(editOrderData))
+    
+    // Navigate to cart with edit mode
+    navigate('/cart?mode=edit')
+  }
+
+  const canEditOrder = () => {
+    if (!order) return false
+    const editableStatuses = ['new', 'draft']
+    return editableStatuses.includes(order.status)
   }
 
   const handleConfirmPayment = async () => {
@@ -614,7 +695,7 @@ const OrderDetail: React.FC = () => {
         </div>
 
         {/* Payment Method */}
-        {order.payment_method && (
+        {order.payment_method_id && (
           <div className="bg-white rounded-lg shadow-sm p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Payment Method</h2>
             <div className="space-y-3">
@@ -622,7 +703,7 @@ const OrderDetail: React.FC = () => {
                 <span className="w-5 h-5 text-gray-400">🏦</span>
                 <div>
                   <p className="text-sm text-gray-600">Bank Name</p>
-                  <p className="font-medium">{order.payment_method.bank_name}</p>
+                  <p className="font-medium">{order.payment_method_id.bank_name}</p>
                 </div>
               </div>
               
@@ -630,7 +711,7 @@ const OrderDetail: React.FC = () => {
                 <span className="w-5 h-5 text-gray-400">💳</span>
                 <div>
                   <p className="text-sm text-gray-600">Account Number</p>
-                  <p className="font-medium">{order.payment_method.bank_account_number}</p>
+                  <p className="font-medium">{order.payment_method_id.bank_account_number}</p>
                 </div>
               </div>
               
@@ -638,7 +719,7 @@ const OrderDetail: React.FC = () => {
                 <span className="w-5 h-5 text-gray-400">👤</span>
                 <div>
                   <p className="text-sm text-gray-600">Account Owner</p>
-                  <p className="font-medium">{order.payment_method.bank_account_owner_name}</p>
+                  <p className="font-medium">{order.payment_method_id.bank_account_owner_name}</p>
                 </div>
               </div>
               
@@ -744,6 +825,22 @@ const OrderDetail: React.FC = () => {
             ))}
           </div>
         )}
+
+        {/* Edit Order Button */}
+        <div className="mt-4">
+          <button
+            onClick={handleEditInCart}
+            disabled={!canEditOrder()}
+            className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
+              canEditOrder()
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+            title={!canEditOrder() ? 'Order can only be edited when status is New or Draft' : ''}
+          >
+            📝 Edit Order
+          </button>
+        </div>
       </div>
       
       {/* Invoice Modal */}
@@ -756,6 +853,95 @@ const OrderDetail: React.FC = () => {
           orderNumber={order.order_number}
         />
       )}
+
+      {/* Success Dialog */}
+       <Dialog
+         isOpen={showSuccessDialog}
+         onClose={() => setShowSuccessDialog(false)}
+         title="Status Update"
+       >
+         <p className="text-gray-700">{successMessage}</p>
+         <div className="mt-4 flex justify-end">
+           <button
+             onClick={() => setShowSuccessDialog(false)}
+             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+           >
+             OK
+           </button>
+         </div>
+       </Dialog>
+
+       {/* Warning Dialog */}
+       <ConfirmDialog
+         isOpen={showWarningDialog}
+         onClose={() => {
+           setShowWarningDialog(false)
+           setWarningAction(null)
+         }}
+         onConfirm={handleWarningConfirm}
+         title={`Confirm ${warningAction === 'cancelled' ? 'Cancellation' : 'Return'}`}
+         message={`Are you sure you want to mark this order as ${warningAction}? This action cannot be undone.`}
+         confirmText={`Yes, ${warningAction === 'cancelled' ? 'Cancel' : 'Return'} Order`}
+         cancelText="No, Keep Current Status"
+         confirmButtonClass="bg-red-600 hover:bg-red-700 text-white"
+       />
+
+       {/* Payment Proof Dialog */}
+       <Dialog
+         isOpen={showPaymentProofDialog}
+         onClose={() => {
+           setShowPaymentProofDialog(false)
+           setPaymentProofFile(null)
+         }}
+         title="Mark as Paid"
+       >
+         <div>
+           <p className="text-gray-700 mb-4">Do you want to upload payment proof before marking this order as paid?</p>
+           
+           <div className="mb-4">
+             <label className="block text-sm font-medium text-gray-700 mb-2">
+               Payment Proof (Optional)
+             </label>
+             <input
+               type="file"
+               accept="image/*"
+               onChange={(e) => {
+                 const file = e.target.files?.[0]
+                 if (file) {
+                   setPaymentProofFile(file)
+                 }
+               }}
+               className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+             />
+           </div>
+
+           <div className="flex gap-2 justify-end">
+             <button
+               onClick={() => {
+                 setShowPaymentProofDialog(false)
+                 setPaymentProofFile(null)
+               }}
+               className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+             >
+               Cancel
+             </button>
+             <button
+               onClick={() => handlePaymentProofSubmit(true)}
+               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+             >
+               Skip Upload
+             </button>
+             {paymentProofFile && (
+               <button
+                 onClick={() => handlePaymentProofSubmit(false)}
+                 className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+               >
+                 Upload & Mark Paid
+               </button>
+             )}
+           </div>
+         </div>
+       </Dialog>
     </div>
   )
 }

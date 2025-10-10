@@ -31,8 +31,20 @@ chrome.tabs.onUpdated.addListener(async (tabId: number, changeInfo: chrome.tabs.
   }
 })
 
-// Handle WhatsApp injection messages from side panel
+// Handle messages from side panel and auth callbacks
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Handle email verification success
+  if (msg?.type === "EMAIL_VERIFIED") {
+    // Store the verification success and session data
+    chrome.storage.local.set({
+      email_verification_success: true,
+      auth_session: msg.session,
+      verification_timestamp: Date.now()
+    });
+    sendResponse({ success: true });
+    return;
+  }
+  
   if (msg?.type !== "INSERT_WHATSAPP") return;
 
   (async () => {
