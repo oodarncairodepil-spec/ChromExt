@@ -1,0 +1,31 @@
+{
+  "rewrites": [
+    {
+      "source": "/auth-callback.html",
+      "destination": "/public/auth-callback.html"
+    },
+    {
+      "source": "/auth-callback",
+      "destination": "/public/auth-callback.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/public/auth-callback.html",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' 'unsafe-eval'; frame-src 'self';"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ]
+}
