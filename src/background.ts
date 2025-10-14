@@ -1,18 +1,18 @@
+// Enable side panel for all tabs by default
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+
 chrome.action.onClicked.addListener(async (tab: chrome.tabs.Tab) => {
+  if (!tab.id) return
+  
   try {
-    // Set the side panel options
+    // Set the side panel options for this tab
     await chrome.sidePanel.setOptions({
       tabId: tab.id,
       path: 'src/sidepanel/index.html',
       enabled: true
     })
-    
-    // Open the side panel
-    await chrome.sidePanel.open({
-      tabId: tab.id
-    })
   } catch (error) {
-    console.error('Failed to open side panel:', error)
+    console.error('Failed to set side panel options:', error)
   }
 })
 

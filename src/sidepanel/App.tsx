@@ -23,6 +23,7 @@ import TemplateCreate from '../pages/TemplateCreate'
 import Profile from '../pages/Profile'
 import PaymentMethod from '../pages/PaymentMethod'
 import ShippingCourier from '../pages/ShippingCourier'
+import Integration from '../pages/Integration'
 import Test from '../pages/Test'
 import AuthCallback from '../pages/AuthCallback'
 import Loading from '../components/Loading'
@@ -92,6 +93,7 @@ const AuthenticatedApp: React.FC = () => {
           <Route path="/profile" element={<Profile />} />
           <Route path="/payment-method" element={<PaymentMethod />} />
           <Route path="/shipping-courier" element={<ShippingCourier />} />
+          <Route path="/integration" element={<Integration />} />
           <Route path="/test" element={<Test />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

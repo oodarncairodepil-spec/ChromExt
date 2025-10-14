@@ -122,3 +122,36 @@ test*.html
 # Additional non-essential files
 selector.txt
 COMPREHENSIVE_DOCUMENTATION*.md
+
+# Development and debugging files
+*.log
+*.debug
+*.trace
+
+# Package manager files
+package-lock.json.bak
+yarn.lock.bak
+
+# Chrome extension development
+*.crx
+*.pem
+*.zip
+
+# Database and migration files (sensitive)
+*.sql.bak
+migration-*.js
+
+# Image processing outputs
+compressed/
+resized/
+optimized/
+
+# Editor and system files
+.history/
+*.code-workspace
+.vscode/settings.json
+
+# Runtime and cache
+.cache/
+.tmp/
+temp/
