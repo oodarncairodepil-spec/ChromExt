@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchTemplates } from '../lib/supabase'
+import { supabase, fetchTemplates } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import { generateWhatsAppMessage } from '../utils/ogUtils'
+import { sendToWhatsAppWithImage } from '../utils/imageUtils'
+import { improvedSendToWhatsApp } from '../utils/improvedImageUtils'
+import useDebouncedSearch from '../hooks/useDebouncedSearch'
+import { processOrderTemplate, OrderData } from '../utils/templateProcessor'
 
 interface Template {
   id: string;
@@ -20,12 +25,123 @@ interface Template {
 
 const Templates: React.FC = () => {
   const navigate = useNavigate()
-  const [templates, setTemplates] = useState<Template[]>([])
-  const [filteredTemplates, setFilteredTemplates] = useState<Template[]>([])
-  const [loading, setLoading] = useState(true)
+  const { user } = useAuth()
+  const [searchTerm, setSearchTerm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [searchTerm, setSearchTerm] = useState('')
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showProcessedPreview, setShowProcessedPreview] = useState<string | null>(null)
+  
+  // Sample order data for template preview
+  const sampleOrderData: OrderData = {
+    id: 'sample-order-123',
+    order_number: 'ORD-2024-001',
+    customer_name: 'Izki',
+    customer_phone: '6281259498653',
+    customer_address: 'Bintaro Jaya nomer 88',
+    customer_city: 'Jakarta Selatan',
+    customer_district: 'Bintaro',
+    total_amount: 32500,
+    subtotal: 22500,
+    shipping_fee: 10000,
+    items: [
+      {
+        product_id: 'prod-123',
+        product_name: 'Kombucha Bons',
+        price: 22500,
+        quantity: 1,
+        variant_name: 'Original'
+      }
+    ],
+    shipping_info: {
+      cost: 10000,
+      courier: {
+        id: 'custom-courier',
+        code: 'CUSTOM',
+        name: 'Custom Courier',
+        type: 'express'
+      },
+      service: {
+        id: 'express-service',
+        service_name: 'Express',
+        service_code: 'EXPRESS'
+      },
+      destination: {
+        city_name: 'Jakarta Selatan',
+        district_name: 'Bintaro',
+        province_name: 'DKI Jakarta'
+      }
+    },
+    discount: {
+      type: 'fixed',
+      value: 900,
+      amount: 900
+    },
+    payment_method_id: {
+      bank_name: 'BCA',
+      bank_account_number: '0987654321',
+      bank_account_owner_name: 'Yuri Gagaro'
+    }
+  }
+  
+  const searchTemplates = async (query: string) => {
+    if (!user) return []
+    
+    const data = await fetchTemplates(0, 200, query)
+    return data || []
+  }
+  
+  const { data: searchResults, loading: searchLoading, error: searchError, onCompositionStart, onCompositionEnd } = searchTerm.length >= 3 ? useDebouncedSearch(
+    searchTerm,
+    searchTemplates,
+    { min: 3, delay: 300, maxWait: 800 }
+  ) : { data: null, loading: false, error: null, onCompositionStart: () => {}, onCompositionEnd: () => {} }
+  
+  const isLoading = loading || searchLoading
+  
+  // Load initial templates when component mounts or when search is cleared
+  useEffect(() => {
+    if (searchTerm === '' && user) {
+      const loadInitialTemplates = async () => {
+        setLoading(true)
+        try {
+          const data = await fetchTemplates(0, 200, '')
+          setTemplates(data || [])
+        } catch (error) {
+          console.error('Error loading initial templates:', error)
+        } finally {
+          setLoading(false)
+        }
+      }
+      loadInitialTemplates()
+    }
+  }, [searchTerm, user])
+  
+  // Update templates when search results change
+  useEffect(() => {
+    if (searchResults) {
+      setTemplates(searchResults)
+    } else if (searchTerm === '') {
+      // When search is cleared, reload initial templates
+      if (user) {
+        const loadInitialTemplates = async () => {
+          setLoading(true)
+          try {
+            const data = await fetchTemplates(0, 200, '')
+            setTemplates(data || [])
+          } catch (error) {
+            console.error('Error loading initial templates:', error)
+          } finally {
+            setLoading(false)
+          }
+        }
+        loadInitialTemplates()
+      }
+    }
+  }, [searchResults, searchTerm, user])
+  
+  // Pagination removed - using database search instead
 
   // WhatsApp injection function using message passing to background script
   const insertTextIntoWhatsApp = async (text: string): Promise<boolean> => {
@@ -60,94 +176,101 @@ const Templates: React.FC = () => {
     setSuccess(null)
     
     try {
-      // Generate WhatsApp message with template content
+      // Process template with sample data if it contains placeholders
+      let processedMessage = template.message || ''
+      if (template.message && template.message.includes('{')) {
+        processedMessage = processOrderTemplate(template.message, sampleOrderData)
+      }
+      
+      // Generate WhatsApp message with processed template content
       const message = await generateWhatsAppMessage({
         id: template.id,
         title: template.title || 'Template',
-        message: template.message || '',
+        message: processedMessage,
         image_url: template.image_url,
         product_id: template.product_id
       })
       
-      // Try to inject into WhatsApp Web
-      const injected = await insertTextIntoWhatsApp(message)
+      // Use the improved send function that handles both text and image
+      const result = await improvedSendToWhatsApp(
+        message, 
+        template.image_url || undefined, 
+        true
+      )
       
-      if (injected) {
-        setSuccess('Template message sent to WhatsApp!')
+      if (result.success) {
+        setSuccess(result.message)
       } else {
-        // Fallback: copy to clipboard
-        await navigator.clipboard.writeText(message)
-        setError('Could not inject into WhatsApp. Message copied to clipboard instead.')
+        setError(result.message)
       }
+      
+      setTimeout(() => {
+        setSuccess(null)
+        setError(null)
+      }, 5000)
     } catch (error) {
       console.error('Error sending template to WhatsApp:', error)
-      
-      let errorMessage = 'Failed to send template to WhatsApp'
-      if (error instanceof Error) {
-        if (error.message.includes('Chrome extension APIs')) {
-          errorMessage = 'Chrome extension APIs not available. Please ensure this is running as a Chrome extension.'
-        } else if (error.message.includes('web.whatsapp.com')) {
-          errorMessage = 'Please open WhatsApp Web (web.whatsapp.com) and select a chat first.'
-        } else if (error.message.includes('No active tab')) {
-          errorMessage = 'No active browser tab found. Please make sure you have WhatsApp Web open.'
-        } else {
-          errorMessage = `Error: ${error.message}`
-        }
-      }
-      
-      setError(errorMessage)
-      
-      // Try to copy to clipboard as fallback
-      try {
-        const message = await generateWhatsAppMessage({
-          id: template.id,
-          title: template.title || 'Template',
-          message: template.message || '',
-          image_url: template.image_url,
-          product_id: template.product_id
-        })
-        await navigator.clipboard.writeText(message)
-        setError(errorMessage + ' Message copied to clipboard instead.')
-      } catch (clipboardError) {
-        // Clipboard fallback failed too
-        console.error('Clipboard fallback failed:', clipboardError)
-      }
+      setError('Failed to send template to WhatsApp')
+      setTimeout(() => setError(null), 3000)
+    }
+  }
+  
+  const handlePreviewTemplate = (e: React.MouseEvent, template: Template) => {
+    e.stopPropagation()
+    if (template.message && template.message.includes('{')) {
+      const processedMessage = processOrderTemplate(template.message, sampleOrderData)
+      setShowProcessedPreview(processedMessage)
+    } else {
+      setShowProcessedPreview(template.message || 'No message available')
     }
   }
 
+  // Safely truncate strings by codepoints to avoid breaking surrogate pairs
+  const truncateSafe = (text: string, maxLength: number) => {
+    const codepoints = Array.from(text || '');
+    return codepoints.length > maxLength
+      ? `${codepoints.slice(0, maxLength).join('')}...`
+      : text || 'No message available';
+  };
+
+  const handleCreateTemplatesForAllSellers = async () => {
+    try {
+      setLoading(true);
+      const { createTemplatesForAllSellers } = await import('../lib/defaultTemplates');
+      await createTemplatesForAllSellers();
+      setSuccess('Templates created successfully for all sellers');
+      // Refresh the templates list
+      const data = await fetchTemplates(0, 200, searchTerm);
+      setTemplates(data || []);
+    } catch (error) {
+      console.error('Error creating templates for all sellers:', error);
+      setError('Failed to create templates for all sellers');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load initial templates when user is available and no search term
   useEffect(() => {
-    const loadTemplates = async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        
-        const templatesData = await fetchTemplates()
-        
-        setTemplates(templatesData || [])
-        setFilteredTemplates(templatesData || [])
-      } catch (err) {
-        console.error('Error loading templates:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load templates')
-      } finally {
-        setLoading(false)
+    if (user && searchTerm.length === 0) {
+      const loadInitialTemplates = async () => {
+        try {
+          const data = await fetchTemplates(0, 200)
+          // This will be handled by the search hook when searchTerm is empty
+        } catch (error) {
+          console.error('Error loading initial templates:', error)
+        }
       }
+      loadInitialTemplates()
     }
+  }, [user])
 
-    loadTemplates()
-  }, [])
-
-  // Filter templates based on search term
+  // Update error state from search hook
   useEffect(() => {
-    if (searchTerm.length < 3) {
-      setFilteredTemplates(templates)
-    } else {
-      const filtered = templates.filter(template => 
-        template.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        template.message?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      setFilteredTemplates(filtered)
+    if (searchError) {
+      setError(searchError instanceof Error ? searchError.message : 'Search failed')
     }
-  }, [searchTerm, templates])
+  }, [searchError])
 
 
 
@@ -185,12 +308,22 @@ const Templates: React.FC = () => {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 page-container">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Templates</h2>
         </div>
         <div className="flex items-center space-x-3">
+          <button
+            onClick={handleCreateTemplatesForAllSellers}
+            className="flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+            disabled={loading}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.196-2.121M17 20H7m10 0v-2c0-5.523-4.477-10-10-10s-10 4.477-10 10v2m10 0H7m0 0v2a3 3 0 11-6 0v-2m6 0V9a3 3 0 116 0v11" />
+            </svg>
+            <span>Create for All Sellers</span>
+          </button>
           <button
             onClick={() => navigate('/templates/create')}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -212,9 +345,11 @@ const Templates: React.FC = () => {
         </div>
         <input
           type="text"
-          placeholder="Search templates (min 3 characters)..."
+          placeholder="Search templates (min 3 characters for search)..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
         />
       </div>
@@ -243,43 +378,82 @@ const Templates: React.FC = () => {
         </div>
       )}
       
-      {filteredTemplates.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-12">
+          <div className="text-gray-400 mb-2">
+            <svg className="w-8 h-8 mx-auto animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </div>
+          <p className="text-gray-500">Loading templates...</p>
+        </div>
+      ) : !templates || templates.length === 0 ? (
         <div className="text-center py-8">
           <div className="text-gray-400 mb-2">
             <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>
-          <p className="text-gray-500">{searchTerm.length >= 3 ? 'No templates match your search' : 'No templates found'}</p>
+          <p className="text-gray-500">{searchTerm ? 'No templates match your search' : 'No templates found'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          {filteredTemplates.map((template) => (
+          {(templates || []).map((template: Template) => (
             <div 
               key={template.id} 
               className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer relative"
               onClick={() => navigate(`/templates/${template.id}`)}
             >
-              {/* Send Icon */}
-              <button
-                onClick={(e) => handleSendImage(e, template)}
-                className="absolute top-2 right-2 z-10 p-2 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-sm hover:shadow-md transition-all duration-200 group"
-                title="Send to WhatsApp"
-              >
-                <svg 
-                  className="w-4 h-4 text-gray-600 group-hover:text-blue-600 transition-colors" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
+              {/* Action Buttons */}
+              <div className="absolute top-2 right-2 z-10 flex space-x-1">
+                {/* Preview Button */}
+                <button
+                  onClick={(e) => handlePreviewTemplate(e, template)}
+                  className="p-2 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-sm hover:shadow-md transition-all duration-200 group"
+                  title="Preview Template"
                 >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    strokeWidth={2} 
-                    d="M5 12h14m-7-7l7 7-7 7" 
-                  />
-                </svg>
-              </button>
+                  <svg 
+                    className="w-4 h-4 text-gray-600 group-hover:text-green-600 transition-colors" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" 
+                    />
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" 
+                    />
+                  </svg>
+                </button>
+                
+                {/* Send Button */}
+                <button
+                  onClick={(e) => handleSendImage(e, template)}
+                  className="p-2 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-sm hover:shadow-md transition-all duration-200 group"
+                  title="Send to WhatsApp"
+                >
+                  <svg 
+                    className="w-4 h-4 text-gray-600 group-hover:text-blue-600 transition-colors" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M5 12h14m-7-7l7 7-7 7" 
+                    />
+                  </svg>
+                </button>
+              </div>
               {template.image_url && (
                 <div className="h-32 overflow-hidden">
                   <img 
@@ -294,7 +468,7 @@ const Templates: React.FC = () => {
                   {template.title || 'Untitled Template'}
                 </h3>
                 <p className="text-xs text-gray-500 line-clamp-2 mb-3">
-                  {template.message && template.message.length > 100 ? `${template.message.substring(0, 100)}...` : (template.message || 'No message available')}
+                  {truncateSafe(template.message || '', 100)}
                 </p>
 
               </div>
@@ -302,6 +476,45 @@ const Templates: React.FC = () => {
           ))}
         </div>
       )}
+      
+      {/* Template Preview Modal */}
+      {showProcessedPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">Template Preview</h3>
+              <button
+                onClick={() => setShowProcessedPreview(null)}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Processed Message:</h4>
+                <div className="whitespace-pre-wrap text-sm text-gray-900 bg-white p-3 rounded border">
+                  {showProcessedPreview}
+                </div>
+              </div>
+              <div className="mt-4 text-xs text-gray-500">
+                <p>* This preview uses sample order data. Actual templates will use real order information.</p>
+              </div>
+            </div>
+            <div className="flex justify-end p-4 border-t bg-gray-50">
+              <button
+                onClick={() => setShowProcessedPreview(null)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
