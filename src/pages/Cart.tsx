@@ -686,8 +686,45 @@ const Cart: React.FC = () => {
         
         console.log('✅ Edit order data loaded successfully!')
       } else {
-        console.log('⚠️ No edit order data found in localStorage')
-        setError('No order data found for editing')
+        console.log('⚠️ No edit order data found in localStorage, checking persisted edit mode data...')
+        const persistedKey = user ? `edit_mode_data_${user.id}` : null
+        const persistedEdit = persistedKey ? localStorage.getItem(persistedKey) : null
+        if (persistedEdit) {
+          const data = JSON.parse(persistedEdit)
+          console.log('🔄 Restoring from persisted edit mode data:', data)
+          
+          // Restore all form data
+          setManualBuyerPhone(data.manualBuyerPhone || '')
+          setManualBuyerName(data.manualBuyerName || '')
+          setManualBuyerAddress(data.manualBuyerAddress || '')
+          setManualBuyerCityDistrict(data.manualBuyerCityDistrict || '')
+          setSelectedBuyerLocation(data.selectedBuyerLocation || null)
+          setShippingDestination(data.shippingDestination || {})
+          setSelectedShipping(data.selectedShipping || null)
+          setDiscountType(data.discountType || 'percentage')
+          setDiscountValue(data.discountValue || 0)
+          setSelectedBuyer(data.selectedBuyer || null)
+          setBuyerSearch(data.buyerSearch || '')
+
+          if (data.cartItems) setCartItems(data.cartItems)
+          if (data.selectedPaymentMethod) setSelectedPaymentMethod(data.selectedPaymentMethod)
+          if (data.selectedCourier) setSelectedCourier(data.selectedCourier)
+          if (data.selectedService) setSelectedService(data.selectedService)
+          if (data.shippingFee !== undefined) setShippingFee(data.shippingFee)
+          if (data.shippingFeeDisplay) setShippingFeeDisplay(data.shippingFeeDisplay)
+          if (data.orderNotes) setOrderNotes(data.orderNotes)
+          if (data.existingDraftId) setExistingDraftId(data.existingDraftId)
+          
+          // If shipping destination exists, recalculate shipping costs
+          if (data.shippingDestination?.district_id) {
+            calculateShipping(data.shippingDestination.district_id)
+          }
+          
+          console.log('✅ Persisted edit mode data restored successfully')
+        } else {
+          console.log('⚠️ No persisted edit mode data found; showing error')
+          setError('No order data found for editing')
+        }
       }
     } catch (error) {
       console.error('❌ Error loading edit order data:', error)
