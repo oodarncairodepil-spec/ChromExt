@@ -674,10 +674,11 @@ const Cart: React.FC = () => {
           setOrderNotes(orderData.order_notes)
         }
         
-        // Set existing draft ID if this is an existing order
-        if (orderData.orderId) {
-          console.log('🔗 Setting existing draft ID:', orderData.orderId)
-          setExistingDraftId(orderData.orderId)
+        // Set existing draft ID if this is an existing order (supports both Orders.tsx and OrderDetail.tsx formats)
+        const existingId = orderData.orderId || orderData.id
+        if (existingId) {
+          console.log('🔗 Setting existing draft ID:', existingId)
+          setExistingDraftId(existingId)
         }
         
         console.log('🧹 Clearing edit order data from localStorage')
