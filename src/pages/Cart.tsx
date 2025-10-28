@@ -1254,9 +1254,11 @@ const Cart: React.FC = () => {
       const total = subtotal + shippingCost + shippingFee - discountAmount
       const remainingTotal = Math.max(total - (partialPaymentAmount || 0), 0)
 
-      // Create new order with 'New' status
-      const generatedOrderNumber = generateOrderNumber()
+      // Create new order number only if NOT editing an existing order
+      const isEditingExistingOrder = !!existingDraftId
+      const generatedOrderNumber = isEditingExistingOrder ? null : generateOrderNumber()
       console.log('=== CHECKOUT DEBUG ===');
+      console.log('isEditingExistingOrder:', isEditingExistingOrder);
       console.log('generatedOrderNumber:', generatedOrderNumber);
       
       // Parse location text if LocationPicker wasn't used
@@ -1335,10 +1337,10 @@ const Cart: React.FC = () => {
         console.error('Error checking user existence:', userCheckError)
       }
       
-      const orderData = {
-        seller_id: user.id, // Changed from user_id to seller_id to match schema
-        buyer_id: buyerId, // Add buyer_id to link order to user
-        order_number: generatedOrderNumber,
+      // Base order data (shared between create and update)
+      const baseOrderData = {
+        seller_id: user.id,
+        buyer_id: buyerId,
         customer_phone: formattedPhone,
         customer_name: manualBuyerName.trim(),
         customer_address: manualBuyerAddress.trim(),
@@ -1364,7 +1366,6 @@ const Cart: React.FC = () => {
           service: selectedService,
           cost: shippingCost
         },
-        status: 'New',
         items: cartItems.map(item => ({
           product_id: item.product_id,
           quantity: item.quantity,
@@ -1376,18 +1377,47 @@ const Cart: React.FC = () => {
         order_notes: orderNotes.trim() || null
       }
 
-      const { data: newOrderArray, error } = await supabase
-        .from('orders')
-        .insert([orderData])
-        .select()
-        .limit(1)
+      let targetOrderId: string
+      let targetOrderNumber: string | null = null
       
-      const newOrder = newOrderArray && newOrderArray.length > 0 ? newOrderArray[0] : null
-      
-      if (error) {
-        console.error('Error creating order:', error)
-        alert('Error creating order')
-        return
+      if (isEditingExistingOrder && existingDraftId) {
+        // Update existing order: preserve existing order_number and status
+        const { data: updatedOrderArray, error: updateError } = await supabase
+          .from('orders')
+          .update(baseOrderData)
+          .eq('id', existingDraftId)
+          .select('id, order_number')
+          .limit(1)
+        
+        const updatedOrder = updatedOrderArray && updatedOrderArray.length > 0 ? updatedOrderArray[0] : null
+        if (updateError || !updatedOrder) {
+          console.error('Error updating order:', updateError)
+          alert('Error updating order')
+          return
+        }
+        targetOrderId = updatedOrder.id
+        targetOrderNumber = updatedOrder.order_number
+      } else {
+        // Create new order with 'New' status and generated order number
+        const createOrderData = {
+          ...baseOrderData,
+          order_number: generatedOrderNumber!,
+          status: 'New'
+        }
+        const { data: newOrderArray, error: insertError } = await supabase
+          .from('orders')
+          .insert([createOrderData])
+          .select()
+          .limit(1)
+        
+        const newOrder = newOrderArray && newOrderArray.length > 0 ? newOrderArray[0] : null
+        if (insertError || !newOrder) {
+          console.error('Error creating order:', insertError)
+          alert('Error creating order')
+          return
+        }
+        targetOrderId = newOrder.id
+        targetOrderNumber = newOrder.order_number || generatedOrderNumber
       }
       
       // Generate invoice image and summary text
@@ -1416,7 +1446,7 @@ const Cart: React.FC = () => {
         }
         
         const invoiceData = {
-          order_number: newOrder.order_number || generatedOrderNumber,
+          order_number: targetOrderNumber || generatedOrderNumber || '',
           customer_name: manualBuyerName.trim(),
           customer_phone: formattedPhone,
           customer_address: manualBuyerAddress.trim(),
@@ -1453,7 +1483,7 @@ const Cart: React.FC = () => {
         const { error: updateError } = await supabase
           .from('orders')
           .update({ invoice_image: invoiceImageBase64 })
-          .eq('id', newOrder.id)
+          .eq('id', targetOrderId)
         
         if (updateError) {
           console.error('Error saving invoice image:', updateError)
@@ -1466,7 +1496,7 @@ const Cart: React.FC = () => {
          // Set invoice modal data and show it
          setInvoiceImage(invoiceImageBase64)
          setOrderSummaryText(orderSummaryText)
-         setCompletedOrderNumber(newOrder.order_number || generatedOrderNumber)
+         setCompletedOrderNumber(targetOrderNumber || generatedOrderNumber || '')
          setShowInvoiceModal(true)
         
       } catch (invoiceError) {
