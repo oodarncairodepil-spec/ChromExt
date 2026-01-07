@@ -1,5 +1,8 @@
 import React, { useState } from 'react'
 import Dialog from './Dialog'
+import LoadingDialog from './LoadingDialog'
+import { improvedSendToWhatsApp } from '../utils/improvedImageUtils'
+import { htmlToPlainText } from '../utils/htmlToText'
 
 interface InvoiceModalProps {
   isOpen: boolean
@@ -18,6 +21,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
 }) => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [sendStatus, setSendStatus] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
 
   // WhatsApp injection function
   const insertTextIntoWhatsApp = async (text: string, autoSend = false, pasteImage = false) => {
@@ -39,15 +43,12 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
 
   const handleSendToWhatsApp = async () => {
     setSendStatus(null)
+    setIsSending(true) // Set loading state to true
     try {
-      console.log('🚀 Starting WhatsApp send process...')
-      setSendStatus('Preparing to send...')
+      console.log('🚀 Starting improved WhatsApp send process...')
       
-      console.log('🖼️ Processing invoice image for clipboard...')
-      // Convert base64 image to blob and copy to clipboard
+      // Convert base64 image to blob URL for the improved function
       const base64Data = invoiceImage.split(',')[1]
-      console.log('📊 Base64 data length:', base64Data.length)
-      
       const byteCharacters = atob(base64Data)
       const byteNumbers = new Array(byteCharacters.length)
       for (let i = 0; i < byteCharacters.length; i++) {
@@ -55,75 +56,31 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       }
       const byteArray = new Uint8Array(byteNumbers)
       const blob = new Blob([byteArray], { type: 'image/png' })
-      console.log('📦 Created blob:', blob.size, 'bytes, type:', blob.type)
+      const imageUrl = URL.createObjectURL(blob)
       
-      // Copy image to clipboard
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'image/png': blob
-        })
-      ])
-      console.log('✅ Image copied to clipboard successfully')
+      // Format order summary text (convert HTML to plain text if needed)
+      const formattedOrderSummary = htmlToPlainText(orderSummaryText)
+      const message = `Invoice - Order #${orderNumber}\n\n${formattedOrderSummary}`
       
-      // Verify clipboard contents
-      try {
-        const clipboardItems = await navigator.clipboard.read()
-        console.log('📋 Clipboard verification - items:', clipboardItems.length)
-        for (const item of clipboardItems) {
-          console.log('📋 Clipboard item types:', item.types)
-        }
-      } catch (verifyError) {
-        console.warn('⚠️ Could not verify clipboard contents:', verifyError)
+      // Use the improved sending function (same as Products and Templates)
+      const result = await improvedSendToWhatsApp(message, imageUrl, true)
+      
+      // Clean up the blob URL
+      URL.revokeObjectURL(imageUrl)
+      
+      if (result.success) {
+        setSendStatus(`✅ ${result.message}`)
+      } else {
+        setSendStatus(`❌ ${result.message}`)
       }
       
-      // Small delay to ensure clipboard is ready
-      await new Promise(resolve => setTimeout(resolve, 300))
-      
-      console.log('📱 Sending to WhatsApp with auto-paste enabled...')
-      // Send text to WhatsApp with automatic image pasting (but don't auto-send)
-      const message = `Invoice - Order #${orderNumber}\n\n${orderSummaryText}`
-      await insertTextIntoWhatsApp(message, false, true)
-      
-      setSendStatus('✅ Invoice image and text inserted into WhatsApp! Click send to deliver the message.')
       setTimeout(() => setSendStatus(null), 7000)
     } catch (err: any) {
-      console.error('❌ WhatsApp send error:', err)
-      // Fallback: try to copy image to clipboard and send text without auto-paste
-      try {
-        console.log('🔄 Attempting fallback method...')
-        const message = `Invoice - Order #${orderNumber}\n\n${orderSummaryText}`
-        
-        // Try to copy image first
-        try {
-          const base64Data = invoiceImage.split(',')[1]
-          const byteCharacters = atob(base64Data)
-          const byteNumbers = new Array(byteCharacters.length)
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i)
-          }
-          const byteArray = new Uint8Array(byteNumbers)
-          const blob = new Blob([byteArray], { type: 'image/png' })
-          
-          await navigator.clipboard.write([
-            new ClipboardItem({
-              'image/png': blob
-            })
-          ])
-          console.log('✅ Fallback: Image copied to clipboard')
-          
-          await insertTextIntoWhatsApp(message, false, false)
-          setSendStatus('✅ Text inserted into WhatsApp! Image copied to clipboard - paste it in the chat and click send.')
-        } catch (imageErr) {
-          console.error('❌ Image copy error:', imageErr)
-          // If image copy fails, just copy text
-          await navigator.clipboard.writeText(message)
-          setSendStatus('⚠️ Could not copy image. Invoice text copied to clipboard! Download the image manually.')
-        }
-      } catch (clipboardErr) {
-        console.error('❌ Clipboard error:', clipboardErr)
-        setSendStatus('❌ Failed to send to WhatsApp or copy to clipboard. Please try again.')
-      }
+      console.error('❌ Invoice send error:', err)
+      setSendStatus('❌ Failed to send invoice. Please try again.')
       setTimeout(() => setSendStatus(null), 7000)
+    } finally {
+      setIsSending(false) // Always reset loading state
     }
   }
 
@@ -170,9 +127,19 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
           </div>
           <button
             onClick={handleSendToWhatsApp}
-            className="w-full mt-3 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors"
+            disabled={isSending} // Disable button when sending
+            className={`w-full mt-3 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors ${
+              isSending ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
-            Send
+            {isSending ? (
+              <div className="flex items-center justify-center space-x-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Sending...</span>
+              </div>
+            ) : (
+              'Send'
+            )}
           </button>
           {sendStatus && (
             <div className={`mt-2 p-2 rounded text-sm ${
@@ -223,6 +190,9 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
           </div>
         </Dialog>
       )}
+      
+      {/* Loading Dialog */}
+      <LoadingDialog isOpen={isSending} message="Sending to WhatsApp..." />
     </Dialog>
   )
 }

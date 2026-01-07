@@ -20,10 +20,10 @@ interface ApiEndpoint {
 
 const Integration: React.FC = () => {
   const { user } = useAuth();
-  const [partnerId, setPartnerId] = useState('partner-api-test')
-  const [vendorId, setVendorId] = useState('3476')
-  const [apiKey, setApiKey] = useState('40310393ba5b7a21e917567994bb453bd6249786a8284481bfb346609bbfa3d5')
-  const [partnerPass, setPartnerPass] = useState('qbNKbJPpKJlAdECGIcck');
+  const [partnerId, setPartnerId] = useState('')
+  const [vendorId, setVendorId] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [partnerPass, setPartnerPass] = useState('');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<IntegrationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,27 +197,46 @@ const Integration: React.FC = () => {
 
       const responseData = await response.json();
       
+      console.log('=== API RESPONSE DEBUG ===');
+      console.log('Full API Response:', responseData);
+      console.log('Response Status:', response.status);
+      console.log('Response OK:', response.ok);
+      
       if (response.ok && responseData.data) {
-        const mappedProducts = responseData.data.map((product: any) => ({
-          // Original API data
-          original: product,
-          // Mapped data for our database
-          mapped: {
-            name: product.name,
-            description: product.description,
-            image: product.images?.[0]?.url || null,
-            weight: product.weight || (product.productVariations?.[0]?.weight || 0),
-            status: product.available,
-            stock: 0, // As requested
-            price: product.productVariations?.[0]?.price || 0,
-            variants: product.productVariations?.map((variant: any) => ({
-              price: variant.price,
-              weight: variant.weight,
-              sku: variant.sku,
-              stock: 0
-            })) || []
-          }
-        }));
+        console.log('Products from API:', responseData.data);
+        
+        const mappedProducts = responseData.data.map((product: any) => {
+          console.log('=== PROCESSING PRODUCT ===');
+          console.log('Original Product:', product);
+          console.log('Product Variations:', product.productVariations);
+          
+          const mappedProduct = {
+            // Original API data
+            original: product,
+            // Mapped data for our database
+            mapped: {
+              name: product.name,
+              description: product.description,
+              image: product.images?.[0]?.url || null,
+              weight: product.weight || (product.productVariations?.[0]?.weight || 0),
+              status: product.available,
+              stock: 0, // As requested
+              price: product.productVariations?.[0]?.price || 0,
+              variants: product.productVariations?.map((variant: any) => ({
+                price: variant.price,
+                weight: variant.weight,
+                sku: variant.sku,
+                stock: 0
+              })) || []
+            }
+          };
+          
+          console.log('Mapped Product:', mappedProduct);
+          console.log('Mapped Variants:', mappedProduct.mapped.variants);
+          console.log('Has Variants:', mappedProduct.mapped.variants && mappedProduct.mapped.variants.length > 0);
+          
+          return mappedProduct;
+        });
         
         setImportedProducts(mappedProducts);
         setShowProductReview(true);
@@ -270,20 +289,29 @@ const Integration: React.FC = () => {
         try {
           const { mapped } = productData;
           
+          console.log('=== CREATING MAIN PRODUCT ===');
+          console.log('Product name:', mapped.name);
+          console.log('Has variants check:', mapped.variants && mapped.variants.length > 0);
+          console.log('Variants count:', mapped.variants ? mapped.variants.length : 0);
+          
           // Create the main product
-          const { data: product, error: productError } = await supabase
-            .from('products')
-            .insert({
-              user_id: user.id,
-              name: mapped.name,
-              description: mapped.description,
-              image: mapped.image,
-              weight: mapped.weight,
-              status: mapped.status ? 'active' : 'inactive',
-              stock: mapped.stock,
-              price: mapped.price,
-              has_variants: mapped.variants && mapped.variants.length > 0
-            })
+          const productInsertData = {
+            user_id: user.id,
+            name: mapped.name,
+            description: mapped.description,
+            image: mapped.image,
+            weight: mapped.weight,
+            status: mapped.status ? 'active' : 'inactive',
+            stock: mapped.stock,
+            price: mapped.price,
+            has_variants: mapped.variants && mapped.variants.length > 0
+          };
+          
+          console.log('Product data to insert:', productInsertData);
+           
+           const { data: product, error: productError } = await supabase
+             .from('products')
+             .insert(productInsertData)
             .select()
             .single();
 
@@ -293,6 +321,10 @@ const Integration: React.FC = () => {
 
           // Create product variants if they exist
            if (mapped.variants && mapped.variants.length > 0) {
+             console.log('=== CREATING VARIANTS ===');
+             console.log('Product ID:', product.id);
+             console.log('Variants to create:', mapped.variants);
+             
              const variantInserts = mapped.variants.map((variant: any, index: number) => {
                // Extract variant information from SKU
                const sku = variant.sku || `VAR${index + 1}`;
@@ -324,24 +356,32 @@ const Integration: React.FC = () => {
                  }
                }
                
-               return {
+               const variantData = {
                  product_id: product.id,
                  variant_tier_1_value: variantName,
                  full_product_name: `${mapped.name} - ${variantName}`,
                  price: variant.price,
                  weight: variant.weight,
-                 stock: variant.stock,
-                 sku_suffix: sku
+                 stock: variant.stock
                };
+               
+               console.log(`Variant ${index + 1} data:`, variantData);
+               return variantData;
              });
 
-            const { error: variantError } = await supabase
+            console.log('Inserting variants:', variantInserts);
+            
+            const { data: variantResult, error: variantError } = await supabase
               .from('product_variants')
-              .insert(variantInserts);
+              .insert(variantInserts)
+              .select();
 
             if (variantError) {
-              console.warn(`Failed to create variants for "${mapped.name}": ${variantError.message}`);
+              console.error(`Failed to create variants for "${mapped.name}": ${variantError.message}`);
+              console.error('Variant error details:', variantError);
               // Don't fail the entire operation for variant errors
+            } else {
+              console.log('Successfully created variants:', variantResult);
             }
           }
 
@@ -460,9 +500,20 @@ const Integration: React.FC = () => {
         .from('integration_credentials')
         .select('vendor_id, api_key, partner_id, partner_pass')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle(); // Use maybeSingle() instead of single() to handle 406 errors gracefully
 
-      if (error && error.code !== 'PGRST116') {
+      // Handle 406 error (table might not exist or RLS blocking)
+      if (error) {
+        if (error.status === 406 || error.code === 'PGRST301' || error.message?.includes('406')) {
+          console.warn('Integration credentials table may not exist or RLS is blocking access. Please run the database migration if needed.');
+          return;
+        }
+        
+        if (error.code === 'PGRST116') {
+          // No credentials found (this is expected when no credentials are saved)
+          return;
+        }
+        
         console.warn('Error loading credentials:', error.message);
         return;
       }
@@ -581,21 +632,6 @@ const Integration: React.FC = () => {
               />
             </div>
 
-            {/* Partner Pass Field */}
-            <div>
-              <label htmlFor="partnerPass" className="block text-sm font-medium text-gray-700 mb-2">
-                Partner Pass
-              </label>
-              <input
-                type="password"
-                id="partnerPass"
-                value={partnerPass}
-                onChange={(e) => setPartnerPass(e.target.value)}
-                placeholder="Enter your Partner Pass"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
             {/* Partner ID Field */}
             <div>
               <label htmlFor="partnerId" className="block text-sm font-medium text-gray-700 mb-2">
@@ -607,6 +643,21 @@ const Integration: React.FC = () => {
                 value={partnerId}
                 onChange={(e) => setPartnerId(e.target.value)}
                 placeholder="Enter your Partner ID"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            {/* Partner Pass Field */}
+            <div>
+              <label htmlFor="partnerPass" className="block text-sm font-medium text-gray-700 mb-2">
+                Partner Pass
+              </label>
+              <input
+                type="password"
+                id="partnerPass"
+                value={partnerPass}
+                onChange={(e) => setPartnerPass(e.target.value)}
+                placeholder="Enter your Partner Pass"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>

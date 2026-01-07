@@ -1,8 +1,32 @@
 {
-  "manifest_version": 3,
-  "name": "Chrome Side Panel Extension",
-  "version": "0.0.1",
+  "action": {
+    "default_icon": {
+      "16": "icon16.plasmo.108dada4.png",
+      "32": "icon32.plasmo.59ce4af3.png",
+      "48": "icon48.plasmo.0b03f7da.png",
+      "64": "icon64.plasmo.d87c95f4.png",
+      "128": "icon128.plasmo.c5bce55a.png"
+    }
+  },
+  "author": "Your Name",
+  "background": {
+    "service_worker": "static/background/index.js"
+  },
   "description": "A Chrome MV3 extension with side panel React app",
+  "host_permissions": [
+    "https://*/*",
+    "https://web.whatsapp.com/*",
+    "http://localhost:*/*"
+  ],
+  "icons": {
+    "16": "icon16.plasmo.108dada4.png",
+    "32": "icon32.plasmo.59ce4af3.png",
+    "48": "icon48.plasmo.0b03f7da.png",
+    "64": "icon64.plasmo.d87c95f4.png",
+    "128": "icon128.plasmo.c5bce55a.png"
+  },
+  "manifest_version": 3,
+  "name": "DEV | Chrome Side Panel Extension",
   "permissions": [
     "sidePanel",
     "activeTab",
@@ -10,18 +34,18 @@
     "scripting",
     "storage"
   ],
-  "host_permissions": [
-    "https://*/*",
-    "https://web.whatsapp.com/*",
-    "http://localhost:*/*"
-  ],
-  "action": {
-    "default_title": "Open Side Panel"
-  },
   "side_panel": {
-    "default_path": "src/sidepanel/index.html"
+    "default_path": "sidepanel.html"
   },
-  "background": {
-    "service_worker": "background.js"
-  }
+  "version": "0.0.76",
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "__plasmo_hmr_proxy__"
+      ]
+    }
+  ]
 }

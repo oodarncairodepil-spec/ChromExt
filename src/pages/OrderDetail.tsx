@@ -6,6 +6,7 @@ import InvoiceModal from '../components/InvoiceModal'
 import Dialog from '../components/Dialog'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { compressImage } from '../utils/imageCompression'
+import { usePermissions } from '../contexts/PermissionContext'
 
 interface OrderItem {
   product_id: string
@@ -40,6 +41,13 @@ interface Order {
   }
   invoice_image?: string
   payment_proof?: string
+  order_notes?: string
+  buyer_id?: {
+    address: string
+    city: string
+    district: string
+    full_address: string
+  }
   shipping_info?: {
     cost?: number
     courier?: {
@@ -158,6 +166,7 @@ const ProductImageDisplay: React.FC<{ item: OrderItem }> = ({ item }) => {
 const OrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { hasPermission } = usePermissions()
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -190,6 +199,12 @@ const OrderDetail: React.FC = () => {
               bank_name,
               bank_account_number,
               bank_account_owner_name
+            ),
+            buyer_id:users(
+              address,
+              city,
+              district,
+              full_address
             )
           `)
           .eq('id', id)
@@ -497,7 +512,7 @@ const OrderDetail: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 page-container">
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="w-full py-4 px-6">
@@ -616,15 +631,45 @@ const OrderDetail: React.FC = () => {
             </div>
             <div className="flex items-start gap-3">
               <span className="w-5 h-5 text-gray-400 mt-1">📍</span>
-              <div>
-                <p className="text-sm text-gray-600">Address</p>
-                <p className="font-medium">{order.customer_address}</p>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Full Address</p>
+                  <p className="font-medium">{order.customer_address}</p>
+                </div>
+                {order.buyer_id && (order.buyer_id.district || order.buyer_id.city) && (
+                  <div>
+                    <p className="text-sm text-gray-600 mb-1">City & District</p>
+                    <p className="font-medium">
+                      {[order.buyer_id.district, order.buyer_id.city].filter(Boolean).join(', ')}
+                    </p>
+                  </div>
+                )}
+                {!order.buyer_id && order.shipping_info?.destination && (
+                  <div>
+                    <p className="text-sm text-gray-600 mb-1">City & District</p>
+                    <p className="font-medium">
+                      {[order.shipping_info.destination.district_name, order.shipping_info.destination.city_name, order.shipping_info.destination.province_name].filter(Boolean).join(', ')}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-
+        {/* Order Notes */}
+        {order.order_notes && (
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Order Notes</h2>
+            <div className="flex items-start gap-3">
+              <span className="w-5 h-5 text-gray-400 mt-1">📝</span>
+              <div>
+                <p className="text-sm text-gray-600">Customer Notes</p>
+                <p className="font-medium whitespace-pre-wrap">{order.order_notes}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Shipping Information */}
         <div className="bg-white rounded-lg shadow-sm p-6">
@@ -827,20 +872,22 @@ const OrderDetail: React.FC = () => {
         )}
 
         {/* Edit Order Button */}
-        <div className="mt-4">
-          <button
-            onClick={handleEditInCart}
-            disabled={!canEditOrder()}
-            className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-              canEditOrder()
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            }`}
-            title={!canEditOrder() ? 'Order can only be edited when status is New or Draft' : ''}
-          >
-            📝 Edit Order
-          </button>
-        </div>
+        {hasPermission('can_edit_orders') && (
+          <div className="mt-4">
+            <button
+              onClick={handleEditInCart}
+              disabled={!canEditOrder()}
+              className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
+                canEditOrder()
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+              title={!canEditOrder() ? 'Order can only be edited when status is New or Draft' : ''}
+            >
+              📝 Edit Order
+            </button>
+          </div>
+        )}
       </div>
       
       {/* Invoice Modal */}

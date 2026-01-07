@@ -284,6 +284,9 @@ const Profile: React.FC = () => {
       // Set preview
       setLogoPreview(logoUrl)
       setSuccess('Logo uploaded successfully!')
+      
+      // Dispatch event to update header avatar
+      window.dispatchEvent(new CustomEvent('profileUpdated'))
 
     } catch (error) {
       console.error('Error uploading logo:', error)
@@ -344,6 +347,9 @@ const Profile: React.FC = () => {
 
       setSuccess('Profile updated successfully!')
       await loadProfile() // Reload to get updated data
+      
+      // Dispatch event to update header avatar
+      window.dispatchEvent(new CustomEvent('profileUpdated'))
     } catch (error) {
       console.error('Error saving profile:', error)
       setError('Failed to save profile')
@@ -357,7 +363,7 @@ const Profile: React.FC = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
+    <div className="max-w-4xl mx-auto p-6 page-container">
       <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex justify-between items-start">

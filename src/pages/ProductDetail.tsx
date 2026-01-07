@@ -5,8 +5,19 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { ProductVariant, fetchProductVariants, updateProductVariant } from '../utils/variantUtils'
 import { generateVariantMessage, generateProductMessage } from '../utils/ogUtils'
 import { compressImage, isImageFile, formatFileSize } from '../utils/imageCompression'
+import { sendToWhatsAppWithImage } from '../utils/imageUtils'
+import { improvedSendToWhatsApp } from '../utils/improvedImageUtils'
+import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
 
-
+interface Template {
+  id: string
+  title: string
+  message: string
+  image_url?: string
+  variant_id?: string
+  product_id?: string
+}
 
 interface Product {
   id: string;
@@ -20,6 +31,7 @@ interface Product {
   status: string;
   image?: string;
   has_variants?: boolean;
+  has_notes?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +39,8 @@ interface Product {
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const { hasPermission } = usePermissions()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,6 +58,8 @@ const ProductDetail: React.FC = () => {
   const [variantsSaving, setVariantsSaving] = useState<{[key: string]: boolean}>({})
   const [success, setSuccess] = useState<string | null>(null)
   const [whatsappError, setWhatsappError] = useState<string | null>(null)
+  const [variantTemplates, setVariantTemplates] = useState<Record<string, any>>({})
+  const [loadingTemplates, setLoadingTemplates] = useState<Record<string, boolean>>({})
 
   // Helper function to format numbers with thousand separators
   const formatNumber = (value: string | number): string => {
@@ -62,6 +78,106 @@ const ProductDetail: React.FC = () => {
   // Helper function to parse formatted input back to number
   const parseFormattedInput = (value: string): string => {
     return value.replace(/,/g, '')
+  }
+
+  // Fetch templates for variants
+  const fetchVariantTemplates = async (variantIds: string[]) => {
+    if (!user || variantIds.length === 0) return
+
+    try {
+      const { data, error } = await supabase
+        .from('quick_reply_templates')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('variant_id', variantIds)
+
+      if (error) throw error
+
+      // Create a map of variant_id -> template
+      const templateMap: Record<string, any> = {}
+      if (data) {
+        data.forEach((template: any) => {
+          if (template.variant_id) {
+            templateMap[template.variant_id] = template
+          }
+        })
+      }
+      setVariantTemplates(templateMap)
+    } catch (error) {
+      console.error('Error fetching variant templates:', error)
+    }
+  }
+
+  // Create or update template for a variant
+  const handleVariantTemplateSave = async (variantId: string, templateData: { title: string; message: string; image_url?: string }) => {
+    if (!user || !product) return
+
+    try {
+      setLoadingTemplates(prev => ({ ...prev, [variantId]: true }))
+      
+      const existingTemplate = variantTemplates[variantId]
+
+      if (existingTemplate) {
+        // Update existing template
+        const { error } = await supabase
+          .from('quick_reply_templates')
+          .update({
+            title: templateData.title,
+            message: templateData.message,
+            image_url: templateData.image_url || existingTemplate.image_url,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingTemplate.id)
+
+        if (error) throw error
+      } else {
+        // Create new template
+        const { data, error } = await supabase
+          .from('quick_reply_templates')
+          .insert({
+            user_id: user.id,
+            title: templateData.title,
+            message: templateData.message,
+            image_url: templateData.image_url || null,
+            product_id: product.id,
+            variant_id: variantId,
+            is_active: true,
+            is_system: false,
+            is_deletable: true,
+            usage_count: 0
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+        if (data) {
+          setVariantTemplates(prev => ({ ...prev, [variantId]: data }))
+        }
+      }
+
+      // Reload templates
+      await fetchVariantTemplates([variantId])
+    } catch (error: any) {
+      console.error('Error saving variant template:', error)
+      setError(error.message || 'Failed to save template')
+    } finally {
+      setLoadingTemplates(prev => ({ ...prev, [variantId]: false }))
+    }
+  }
+
+  // Navigate to template detail page
+  const handleViewTemplate = (templateId: string) => {
+    navigate(`/templates/${templateId}`)
+  }
+
+  // Navigate to create template page with variant pre-filled
+  const handleCreateTemplate = (variantId: string) => {
+    navigate(`/templates/create`, { 
+      state: { 
+        product_id: product?.id,
+        variant_id: variantId 
+      } 
+    })
   }
 
   useEffect(() => {
@@ -87,6 +203,11 @@ const ProductDetail: React.FC = () => {
       if (data.has_variants) {
         const productVariants = await fetchProductVariants(data.id)
         setVariants(productVariants)
+        
+        // Fetch templates for each variant
+        if (productVariants.length > 0) {
+          await fetchVariantTemplates(productVariants.map(v => v.id))
+        }
       }
     } catch (error: any) {
       setError(error.message)
@@ -264,7 +385,7 @@ const ProductDetail: React.FC = () => {
     try {
       // First, delete any cart items that reference this product
       await supabase
-        .from('cart')
+        .from('cart_items')
         .delete()
         .eq('product_id', product.id)
 
@@ -371,18 +492,22 @@ const ProductDetail: React.FC = () => {
     
     try {
       const message = generateVariantMessage(product, variant)
-      await insertTextIntoWhatsApp(message, false)
-      setSuccess('Variant message inserted into WhatsApp!')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (err: any) {
-      // Fallback to clipboard
-      try {
-        const message = generateVariantMessage(product, variant)
-        await navigator.clipboard.writeText(message)
-        setWhatsappError(err.message || 'WhatsApp not detected. Variant message copied to clipboard!')
-      } catch (clipboardErr) {
-        setWhatsappError('Failed to send to WhatsApp or copy to clipboard')
+      const imageUrl = variant.image_url || product.image
+      
+      const result = await improvedSendToWhatsApp(message, imageUrl, true)
+      
+      if (result.success) {
+        setSuccess(result.message)
+      } else {
+        setWhatsappError(result.message)
       }
+      
+      setTimeout(() => {
+        setSuccess(null)
+        setWhatsappError(null)
+      }, 3000)
+    } catch (err: any) {
+      setWhatsappError('Failed to share variant')
       setTimeout(() => setWhatsappError(null), 3000)
     }
   }
@@ -396,24 +521,27 @@ const ProductDetail: React.FC = () => {
     
     try {
       const message = generateProductMessage({ ...product, image_url: product.image })
-      await insertTextIntoWhatsApp(message, false)
-      setSuccess('Product message inserted into WhatsApp!')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (err: any) {
-      // Fallback to clipboard
-      try {
-        const message = generateProductMessage({ ...product, image_url: product.image })
-        await navigator.clipboard.writeText(message)
-        setWhatsappError(err.message || 'WhatsApp not detected. Product message copied to clipboard!')
-      } catch (clipboardErr) {
-        setWhatsappError('Failed to send to WhatsApp or copy to clipboard')
+      
+      const result = await improvedSendToWhatsApp(message, product.image, true)
+      
+      if (result.success) {
+        setSuccess(result.message)
+      } else {
+        setWhatsappError(result.message)
       }
+      
+      setTimeout(() => {
+        setSuccess(null)
+        setWhatsappError(null)
+      }, 3000)
+    } catch (err: any) {
+      setWhatsappError('Failed to share product')
       setTimeout(() => setWhatsappError(null), 3000)
     }
   }
 
   return (
-    <div className="p-6 w-full">
+    <div className="p-6 w-full page-container">
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
           <button
@@ -425,22 +553,25 @@ const ProductDetail: React.FC = () => {
           <div className="flex flex-wrap gap-2">
             {!isEditing ? (
               <>
-
-                <button
-                  onClick={handleDelete}
-                  className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Delete
-                </button>
-                <button
-                  onClick={handleEdit}
-                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-                >
-                  Edit
-                </button>
+                {hasPermission('can_delete_products') && (
+                  <button
+                    onClick={handleDelete}
+                    className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete
+                  </button>
+                )}
+                {hasPermission('can_edit_products') && (
+                  <button
+                    onClick={handleEdit}
+                    className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                  >
+                    Edit
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -684,6 +815,34 @@ const ProductDetail: React.FC = () => {
               <p className="text-gray-900">{product.is_digital ? 'Digital' : 'Physical'}</p>
             )}
           </div>
+
+          {/* Product Notes */}
+          <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Product Notes
+            </label>
+            {isEditing ? (
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="has_notes"
+                  checked={editedProduct.has_notes || false}
+                  onChange={(e) => handleInputChange('has_notes', e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-3"
+                />
+                <div>
+                  <label htmlFor="has_notes" className="text-sm font-medium text-gray-900">
+                    Enable product notes
+                  </label>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Allow customers to add special instructions or notes for this product.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-900">{product.has_notes ? 'Enabled' : 'Disabled'}</p>
+            )}
+          </div>
         </div>
 
         {/* Product Variants Section */}
@@ -906,6 +1065,68 @@ const ProductDetail: React.FC = () => {
                           </label>
                         </div>
                       )}
+
+                      {/* Variant Template/Description Section */}
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-xs font-medium text-gray-700">
+                            Quick Reply Template
+                          </label>
+                          {variantTemplates[variant.id] ? (
+                            <button
+                              onClick={() => handleViewTemplate(variantTemplates[variant.id].id)}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              View Template
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleCreateTemplate(variant.id)}
+                              className="text-xs text-green-600 hover:text-green-800 font-medium"
+                            >
+                              Create Template
+                            </button>
+                          )}
+                        </div>
+                        
+                        {variantTemplates[variant.id] ? (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <p className="text-sm font-semibold text-blue-900 mb-1">
+                                  {variantTemplates[variant.id].title}
+                                </p>
+                                <p className="text-xs text-blue-700 line-clamp-2">
+                                  {variantTemplates[variant.id].message}
+                                </p>
+                              </div>
+                              {variantTemplates[variant.id].image_url && (
+                                <img
+                                  src={variantTemplates[variant.id].image_url}
+                                  alt={variantTemplates[variant.id].title}
+                                  className="w-12 h-12 object-cover rounded ml-2"
+                                />
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleCreateTemplate(variant.id)}
+                              className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              Edit Template
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                            <p className="text-xs text-gray-500 mb-2">No template assigned</p>
+                            <button
+                              onClick={() => handleCreateTemplate(variant.id)}
+                              className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded transition-colors"
+                            >
+                              Create Template
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )

@@ -101,7 +101,8 @@ Desktop.ini
 *.temp
 
 # Test files and documentation (non-essential for production)
-test-files/
+# Note: test-files/ has been merged into scripts/test/
+# scripts/test/ is kept in git for developer reference
 docs/
 
 # Backup files
@@ -109,15 +110,19 @@ docs/
 *.backup
 
 # Data files and test outputs
+# Note: Test data files are now in scripts/test/data/
 data*.txt
 *.json.bak
-query_test.json
-product_check.json
-product_images_check.json
+# Test output files (keep test data files in scripts/test/data/)
+scripts/test/data/query_test.json
+scripts/test/data/product_check.json
+scripts/test/data/product_images_check.json
 
 # HTML test files
-*.test.html
-test*.html
+# Note: Test HTML files are now in scripts/test/
+# Keep test HTML files in git for developer reference
+# *.test.html
+# test*.html
 
 # Additional non-essential files
 selector.txt
@@ -146,6 +151,10 @@ compressed/
 resized/
 optimized/
 
+# Test images (large files, optional to ignore)
+# Uncomment if you want to ignore test images
+# scripts/assets/test-images/
+
 # Editor and system files
 .history/
 *.code-workspace
@@ -155,3 +164,7 @@ optimized/
 .cache/
 .tmp/
 temp/
+
+# Script backup directories (created during merges)
+scripts/database-backup/
+supabase/migrations-backup/

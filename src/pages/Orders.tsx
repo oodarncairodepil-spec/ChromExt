@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import Loading from '../components/Loading'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
+import { fixImageUrl, createFallbackImage } from '../utils/imageUtils'
 
 interface Order {
   id: string
@@ -13,6 +15,7 @@ interface Order {
   status: string
   created_at: string
   items: any[] // JSONB array from database
+  order_notes?: string
   shipping_info?: {
     cost?: number
     courier?: {
@@ -97,6 +100,56 @@ const getLogoSrc = (logoData: string | null): string | undefined => {
 };
 
 const CourierLogoDisplay: React.FC<{ courier: { id: string; code: string; name: string; logo_data?: string | null } }> = ({ courier }) => {
+  const [shopLogo, setShopLogo] = useState<string | null>(null);
+  const { user } = useAuth();
+  
+  // Fetch shop logo for custom couriers
+  useEffect(() => {
+    const fetchShopLogo = async () => {
+      if (courier.code === 'custom' && user?.id) {
+        try {
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .select('shop_logo_url')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          
+          if (data && data.shop_logo_url) {
+            setShopLogo(data.shop_logo_url);
+          }
+        } catch (error) {
+          // Silently handle errors - shop logo is optional
+        }
+      }
+    };
+    
+    fetchShopLogo();
+  }, [courier.code, user?.id]);
+  
+  // For custom couriers, use shop logo if available
+  if (courier.code === 'custom' && shopLogo) {
+    return (
+      <div className="flex items-center space-x-2">
+        <img 
+          src={shopLogo} 
+          alt={courier.name} 
+          className="w-6 h-6 object-contain rounded"
+          onError={(e) => {
+            // Fallback to text badge if shop logo fails to load
+            const target = e.target as HTMLImageElement;
+            target.style.display = 'none';
+            const textBadge = target.nextElementSibling as HTMLElement;
+            if (textBadge) textBadge.style.display = 'block';
+          }}
+        />
+        <div className="bg-green-600 text-white px-2 py-1 rounded text-xs font-medium" style={{display: 'none'}}>
+          {courier.name.toUpperCase()}
+        </div>
+      </div>
+    );
+  }
+  
+  // For regular couriers, use existing logic
   const logoSrc = getLogoSrc(courier.logo_data || null);
   
   if (logoSrc) {
@@ -121,36 +174,41 @@ const CourierLogoDisplay: React.FC<{ courier: { id: string; code: string; name: 
     );
   }
   
+  // Fallback for custom couriers without shop logo or regular couriers without logo
+  const badgeColor = courier.code === 'custom' ? 'bg-green-600' : 'bg-blue-600';
+  
   return (
-    <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium">
+    <div className={`${badgeColor} text-white px-2 py-1 rounded text-xs font-medium`}>
       {courier.name.toUpperCase()}
     </div>
   );
 };
 
-const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
+const ProductImageDisplay: React.FC<{ items: any[]; user: any }> = ({ items, user }) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageError, setImageError] = useState(false)
 
   useEffect(() => {
     const getProductImage = async () => {
       if (!items || items.length === 0) {
-        console.log('🖼️ No items found for image display')
+        setImageError(true)
+        return
+      }
+
+      // Check if user is authenticated before making database queries
+      if (!user) {
         setImageError(true)
         return
       }
 
       const firstItem = items[0]
-      console.log('🖼️ Processing item for image:', firstItem)
       
       // First try to use product_image if available (new orders)
       if (firstItem.product_image) {
-        console.log('🖼️ Using product_image from order item:', firstItem.product_image.substring(0, 100) + '...')
-        
-        // If it's already a full URL or data URL, use it directly
+        // If it's already a full URL or data URL, use it directly (but fix broken placeholders)
         if (firstItem.product_image.startsWith('http') || firstItem.product_image.startsWith('data:')) {
-          console.log('🖼️ Using full URL or data URL directly')
-          setImageUrl(firstItem.product_image)
+          const fixedUrl = fixImageUrl(firstItem.product_image, firstItem.product_name || 'Product')
+          setImageUrl(fixedUrl)
           return
         }
         
@@ -166,7 +224,6 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
           .getPublicUrl(imagePath)
 
         if (urlData?.publicUrl) {
-          console.log('🖼️ Got public URL from product_image:', urlData.publicUrl)
           setImageUrl(urlData.publicUrl)
           return
         }
@@ -174,7 +231,6 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
       
       // Fallback: fetch image from product_images table first, then products table using product_id (existing orders)
       if (firstItem.product_id) {
-        console.log('🖼️ Fetching image for product_id:', firstItem.product_id)
         try {
           // First try to get image from product_images table (new approach)
           const { data: productImagesData, error: productImagesError } = await supabase
@@ -182,13 +238,10 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
             .select('image_url')
             .eq('product_id', firstItem.product_id)
             .eq('is_primary', true)
-            .single()
+            .limit(1)
 
-          console.log('🖼️ Product images data:', productImagesData, 'Error:', productImagesError)
-
-          if (!productImagesError && productImagesData?.image_url) {
-            console.log('🖼️ Found primary image in product_images table:', productImagesData.image_url.substring(0, 100) + '...')
-            setImageUrl(productImagesData.image_url)
+          if (!productImagesError && productImagesData && productImagesData.length > 0 && productImagesData[0]?.image_url) {
+            setImageUrl(productImagesData[0].image_url)
             return
           }
 
@@ -198,11 +251,9 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
             .select('image_url')
             .eq('product_id', firstItem.product_id)
             .limit(1)
-            .single()
 
-          if (!anyImageError && anyImageData?.image_url) {
-            console.log('🖼️ Found any image in product_images table:', anyImageData.image_url.substring(0, 100) + '...')
-            setImageUrl(anyImageData.image_url)
+          if (!anyImageError && anyImageData && anyImageData.length > 0 && anyImageData[0]?.image_url) {
+            setImageUrl(anyImageData[0].image_url)
             return
           }
 
@@ -213,15 +264,11 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
             .eq('id', firstItem.product_id)
             .single()
 
-          console.log('🖼️ Product data from database:', productData, 'Error:', productError)
-
           if (!productError && productData?.image) {
-            console.log('🖼️ Found product image in database:', productData.image.substring(0, 100) + '...')
-            
-            // If it's already a full URL or data URL, use it directly
+            // If it's already a full URL or data URL, use it directly (but fix broken placeholders)
             if (productData.image.startsWith('http') || productData.image.startsWith('data:')) {
-              console.log('🖼️ Using full URL or data URL directly from database')
-              setImageUrl(productData.image)
+              const fixedUrl = fixImageUrl(productData.image, firstItem.product_name || 'Product')
+              setImageUrl(fixedUrl)
               return
             }
             
@@ -237,22 +284,20 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
               .getPublicUrl(imagePath)
 
             if (urlData?.publicUrl) {
-              console.log('🖼️ Got public URL from database image:', urlData.publicUrl)
               setImageUrl(urlData.publicUrl)
               return
             }
           }
         } catch (error) {
-          console.error('🖼️ Error fetching product image:', error)
+          // Silently handle errors - fallback icon will be shown
         }
       }
       
-      console.log('🖼️ No image found, showing fallback icon')
       setImageError(true)
     }
 
     getProductImage()
-  }, [items])
+  }, [items, user])
 
   if (imageError || !imageUrl) {
     return (
@@ -276,6 +321,9 @@ const ProductImageDisplay: React.FC<{ items: any[] }> = ({ items }) => {
 
 const Orders: React.FC = () => {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { user } = useAuth()
+  const { hasPermission, isStaff, ownerId } = usePermissions()
   const [orders, setOrders] = useState<Order[]>([])
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
@@ -285,11 +333,13 @@ const Orders: React.FC = () => {
   const [showFilterModal, setShowFilterModal] = useState(false)
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const filterModalRef = useRef<HTMLDivElement>(null)
-  const { user } = useAuth()
 
+  // Load orders when user changes or when navigating to this page
   useEffect(() => {
-    loadOrders()
-  }, [user])
+    if (user) {
+      loadOrders()
+    }
+  }, [user, location.pathname])
 
   // Close filter modal when clicking outside
   useEffect(() => {
@@ -315,7 +365,11 @@ const Orders: React.FC = () => {
       setLoading(true)
       setError(null)
 
-      const { data: ordersData, error: ordersError } = await supabase
+      // Determine which seller_id to use (owner's ID for staff)
+      const sellerIdToUse = ownerId || user.id
+
+      // Build query
+      let query = supabase
         .from('orders')
         .select(`
           id,
@@ -326,9 +380,18 @@ const Orders: React.FC = () => {
           status,
           created_at,
           items,
-          shipping_info
+          shipping_info,
+          seller_id,
+          created_by
         `)
-        .eq('seller_id', user.id)
+        .eq('seller_id', sellerIdToUse)
+
+      // Note: Staff can see all orders from their owner (seller_id = ownerId)
+      // The can_view_all_orders permission is for future use if we need to restrict
+      // staff to only see orders they created themselves
+      // For now, all staff can see all owner's orders (RLS policy handles security)
+
+      const { data: ordersData, error: ordersError } = await query
         .order('created_at', { ascending: false })
 
       if (ordersError) {
@@ -409,9 +472,9 @@ const Orders: React.FC = () => {
       )
     }
 
-    // Filter by status
+    // Filter by status (case-insensitive comparison)
     if (statusFilter !== 'all') {
-      filtered = filtered.filter(order => order.status === statusFilter)
+      filtered = filtered.filter(order => order.status.toLowerCase() === statusFilter.toLowerCase())
     }
 
     // Filter by date range
@@ -488,12 +551,11 @@ const Orders: React.FC = () => {
         .single()
 
       if (error) {
-        console.error('❌ Error fetching order details:', error)
+        console.error('Error fetching order details:', error)
         alert('Error loading order details for editing')
         return
       }
 
-      console.log('✅ Complete order details fetched:', fullOrder)
       
       // Store order data in localStorage for cart to load
       const editOrderData = {
@@ -510,17 +572,19 @@ const Orders: React.FC = () => {
         shipping_fee: fullOrder.shipping_fee,
         discount: fullOrder.discount,
         totalAmount: fullOrder.total_amount,
-        status: fullOrder.status
+        status: fullOrder.status,
+        order_notes: fullOrder.order_notes || '',
+        // Include partial payment fields to ensure Cart restores correctly
+        partial_payment: fullOrder.partial_payment,
+        partial_payment_amount: fullOrder.partial_payment_amount
       }
       
-      console.log('💾 Storing edit order data in localStorage:', editOrderData)
       localStorage.setItem('editOrderData', JSON.stringify(editOrderData))
       
-      console.log('🚀 Navigating to cart page in edit mode...')
       // Navigate to cart with edit mode
       navigate('/cart?mode=edit')
     } catch (error) {
-      console.error('❌ Error preparing order for edit:', error)
+      console.error('Error preparing order for edit:', error)
       alert('Error loading order for editing')
     }
   }
@@ -530,7 +594,7 @@ const Orders: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 page-container">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
         <div className="text-sm text-gray-500">
@@ -581,10 +645,13 @@ const Orders: React.FC = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="all">Semua Status</option>
-                  <option value="draft">Pembayaran Tertunda</option>
-                  <option value="pending">Lunas</option>
-                  <option value="completed">Selesai</option>
-                  <option value="cancelled">Dibatalkan</option>
+                  <option value="draft">Draft</option>
+                  <option value="new">New</option>
+                  <option value="paid">Paid</option>
+                  <option value="shipped">Shipped</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                  <option value="return">Return</option>
                 </select>
               </div>
               
@@ -665,31 +732,41 @@ const Orders: React.FC = () => {
                     <p className="text-xs text-gray-500 mt-1">{formatDate(order.created_at)}</p>
                   </div>
                   <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                    {order.status === 'draft' ? 'Pembayaran Tertunda' :
-                     order.status === 'pending' ? 'Lunas' :
-                     order.status === 'completed' ? 'Completed' :
-                     order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                    {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                   </span>
                 </div>
 
                 {/* Customer info with product image and courier */}
-                <div className="flex items-center space-x-3 mb-3">
-                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
-                    <ProductImageDisplay items={order.items} />
+                <div className="space-y-2 mb-3">
+                  {/* First row: Image, Name, Phone */}
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
+                      <ProductImageDisplay items={order.items} user={user} />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">{order.customer_name}</p>
+                      <p className="text-sm text-gray-600">{order.customer_phone}</p>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">{order.customer_name}</p>
-                    <p className="text-sm text-gray-600">{order.customer_phone}</p>
-                    <p className="text-lg font-bold text-gray-900 mt-1">Rp {order.total_amount?.toLocaleString('id-ID') || '0'}</p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {order.shipping_info?.courier ? (
-                      <CourierLogoDisplay courier={order.shipping_info.courier} />
-                    ) : (
-                      <div className="bg-gray-400 text-white px-2 py-1 rounded text-xs font-medium">
-                        NO COURIER
-                      </div>
-                    )}
+                  {/* Second row: Price and Courier Logo */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <p className="text-lg font-bold text-gray-900">Rp {order.total_amount?.toLocaleString('id-ID') || '0'}</p>
+                      {order.order_notes && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800" title={order.order_notes}>
+                          📝 Notes
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {order.shipping_info?.courier ? (
+                        <CourierLogoDisplay courier={order.shipping_info.courier} />
+                      ) : (
+                        <div className="bg-gray-400 text-white px-2 py-1 rounded text-xs font-medium">
+                          NO COURIER
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -697,7 +774,7 @@ const Orders: React.FC = () => {
 
                 {/* Action buttons */}
                 <div className="flex items-center justify-between">
-                  {(order.status.toLowerCase() === 'new' || order.status.toLowerCase() === 'draft') && (
+                  {(order.status.toLowerCase() === 'new' || order.status.toLowerCase() === 'draft') && hasPermission('can_edit_orders') && (
                     <button 
                       onClick={() => handleEditInCart(order)}
                       className="text-sm text-gray-600 hover:text-gray-800"

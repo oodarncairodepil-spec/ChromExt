@@ -2,19 +2,13 @@
 module.exports = {
   manifest: {
     manifest_version: 3,
-    name: "Chrome Side Panel Extension",
-    version: "0.0.1",
+    name: "QuickOrder Tab",
+    version: "0.0.7",
     description: "A Chrome MV3 extension with side panel React app",
-    permissions: ["sidePanel", "activeTab", "tabs", "scripting"],
-    host_permissions: ["https://*/*", "https://web.whatsapp.com/*"],
-    action: {
-      default_title: "Open Side Panel"
-    },
+    permissions: ["sidePanel", "activeTab", "tabs", "scripting", "storage", "clipboardRead", "clipboardWrite"],
+    host_permissions: ["https://*/*", "https://web.whatsapp.com/*", "http://localhost:*/*"],
     side_panel: {
       default_path: "src/sidepanel/index.html"
-    },
-    background: {
-      service_worker: "background.js"
     }
   }
 }

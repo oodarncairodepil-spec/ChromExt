@@ -1,9 +1,124 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
 import { generateProductMessage, generateVariantMessage } from '../utils/ogUtils'
 import { ProductVariant, fetchProductVariants } from '../utils/variantUtils'
+import { fixImageUrl, createFallbackImage } from '../utils/imageUtils'
+import { improvedSendToWhatsApp } from '../utils/improvedImageUtils'
+import useDebouncedSearch from '../hooks/useDebouncedSearch'
+import Dialog from '../components/Dialog'
+import LoadingDialog from '../components/LoadingDialog'
+
+// Product Image Display Component
+const ProductImageDisplay: React.FC<{ productId: string; productName?: string }> = ({ productId, productName }) => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [imageError, setImageError] = useState(false)
+  const { user } = useAuth()
+  
+  useEffect(() => {
+    const getProductImage = async () => {
+      try {
+        // First try to get image from product_images table (new approach)
+        const { data: productImagesData, error: productImagesError } = await supabase
+          .from('product_images')
+          .select('image_url')
+          .eq('product_id', productId)
+          .eq('is_primary', true)
+          .limit(1)
+
+        if (!productImagesError && productImagesData && productImagesData.length > 0 && productImagesData[0]?.image_url) {
+          setImageUrl(productImagesData[0].image_url)
+          return
+        }
+
+        // If no primary image found, get any image from product_images table
+        const { data: anyImageData, error: anyImageError } = await supabase
+          .from('product_images')
+          .select('image_url')
+          .eq('product_id', productId)
+          .limit(1)
+
+        if (!anyImageError && anyImageData && anyImageData.length > 0 && anyImageData[0]?.image_url) {
+          setImageUrl(anyImageData[0].image_url)
+          return
+        }
+
+        // Fallback to products table (legacy approach)
+        const { data: productData, error: productError } = await supabase
+          .from('products')
+          .select('image')
+          .eq('id', productId)
+          .single()
+
+        if (!productError && productData?.image) {
+          // If it's already a full URL or data URL, use it directly (but fix broken placeholders)
+          if (productData.image.startsWith('http') || productData.image.startsWith('data:')) {
+            const fixedUrl = fixImageUrl(productData.image, productName || 'Product')
+            setImageUrl(fixedUrl)
+            return
+          }
+          
+          // Extract filename from full URL if it's a complete URL
+          let imagePath = productData.image
+          if (imagePath.includes('supabase.co')) {
+            const urlParts = imagePath.split('/')
+            imagePath = urlParts[urlParts.length - 1]
+          }
+          
+          const { data: urlData } = supabase.storage
+            .from('products')
+            .getPublicUrl(imagePath)
+
+          if (urlData?.publicUrl) {
+            setImageUrl(urlData.publicUrl)
+            return
+          }
+        }
+
+        // If no image found, create fallback
+        const fallbackImage = createFallbackImage(productName || 'Product')
+        setImageUrl(fallbackImage)
+      } catch (error) {
+        const fallbackImage = createFallbackImage(productName || 'Product')
+        setImageUrl(fallbackImage)
+      }
+      
+      if (!imageUrl) {
+        setImageError(true)
+      }
+    }
+
+    getProductImage()
+  }, [productId])
+
+  const handleImageError = () => {
+    setImageError(true)
+  }
+
+  if (imageError || !imageUrl) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">
+        <div className="text-center">
+          <svg className="w-6 h-6 mx-auto mb-1" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+          </svg>
+          <div className="text-xs">{productName?.charAt(0)?.toUpperCase() || 'P'}</div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <img 
+      src={imageUrl} 
+      alt={productName || 'Product'} 
+      className="w-full h-full object-cover"
+      onError={handleImageError}
+    />
+  )
+}
 
 interface Product {
   id: string;
@@ -22,82 +137,271 @@ interface Product {
   variants?: ProductVariant[];
 }
 
+// --- Search relevance helpers ---
+// Normalize text: lowercase, trim, collapse spaces, remove diacritics
+const normalizeText = (str: string | undefined): string => {
+  if (!str) return ''
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Tokenize normalized text into words
+const tokenize = (str: string): string[] => {
+  if (!str) return []
+  return str.split(' ').filter(Boolean)
+}
+
+// Extract pack size from product name like "isi 25 pcs" → 25
+const extractPackSize = (name: string | undefined): number | null => {
+  const n = normalizeText(name)
+  const m = n.match(/isi\s*(\d{1,4})/)
+  if (m && m[1]) {
+    const val = parseInt(m[1], 10)
+    return Number.isFinite(val) ? val : null
+  }
+  return null
+}
+
+// Compute a relevance score based on query and product content
+const computeRelevanceScore = (product: Product, query: string): number => {
+  const qNorm = normalizeText(query)
+  const nameNorm = normalizeText(product.name)
+  const descNorm = normalizeText(product.description)
+  let score = 0
+
+  if (!qNorm) return score
+
+  // Exact phrase in name gets a strong boost; starts-with gets additional boost
+  if (nameNorm.includes(qNorm)) {
+    score += 120
+    if (nameNorm.startsWith(qNorm)) score += 50
+  }
+
+  const qTokens = tokenize(qNorm)
+  let matchedInName = 0
+  let matchedInDesc = 0
+  for (const t of qTokens) {
+    if (!t) continue
+    if (nameNorm.includes(t)) {
+      score += 40
+      matchedInName++
+    } else if (descNorm.includes(t)) {
+      score += 15
+      matchedInDesc++
+    }
+  }
+  if (matchedInName === qTokens.length && qTokens.length > 0) {
+    score += 60
+  }
+
+  // Special boost for "tampah daun" pack items to surface sizes first
+  const isTampahDaunPhrase = nameNorm.includes('tampah daun')
+  const packSize = extractPackSize(product.name)
+  if (isTampahDaunPhrase && packSize !== null) {
+    score += 100
+  }
+
+  return score
+}
+
 const Products: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const [products, setProducts] = useState<Product[]>([])  
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([])  
-  const [loading, setLoading] = useState(true)  
+  const { hasPermission, ownerId, isStaff } = usePermissions()
   const [error, setError] = useState<string | null>(null)  
   const [success, setSuccess] = useState<string | null>(null)  
-  const [searchTerm, setSearchTerm] = useState('')  
+  const [searchTerm, setSearchTerm] = useState('')
   const [addingToCart, setAddingToCart] = useState<string | null>(null)
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set())
+  const [showImageReadyDialog, setShowImageReadyDialog] = useState(false)
+  const [imageReadyMessage, setImageReadyMessage] = useState<string>('')
+  const [isSending, setIsSending] = useState(false)
+  
+  // Create search function for the hook
+  const searchProducts = useCallback(async (query: string): Promise<Product[]> => {
+    if (!user) {
+      throw new Error('Authentication required')
+    }
 
-  useEffect(() => {
-    const loadProducts = async () => {
-      if (!user) {
-        setError('Authentication required')
-        setLoading(false)
-        return
+    try {
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
+      // Build query with search functionality
+      let supabaseQuery = supabase
+        .from('products')
+        .select('*')
+        .eq('user_id', userIdToUse)
+      
+      // Add search filters if search query is provided
+      if (query && query.length >= 3) {
+        // Split search query into individual words for better matching
+        const searchWords = query.trim().split(/\s+/).filter(word => word.length > 0)
+        
+        // Create OR conditions for all words across all searchable fields
+        const allConditions = searchWords.flatMap(word => [
+          `name.ilike.%${word}%`,
+          `description.ilike.%${word}%`,
+          `status.ilike.%${word}%`
+        ])
+        
+        supabaseQuery = supabaseQuery.or(allConditions.join(','))
+      }
+      
+      // Apply ordering
+      const { data: productsData, error: productsError } = await supabaseQuery
+        .order('created_at', { ascending: false })
+        .limit(200)
+      
+      if (productsError) {
+        throw productsError
+      }
+      
+      // Fetch variants for products that have variants
+      const productsWithVariants = await Promise.all(
+        (productsData || []).map(async (product) => {
+          if (product.has_variants) {
+            try {
+              const variants = await fetchProductVariants(product.id)
+              return { ...product, variants }
+            } catch (err) {
+              console.error(`Error fetching variants for product ${product.id}:`, err)
+              return product
+            }
+          }
+          return product
+        })
+      )
+      
+      // If searching, sort client-side by relevance and tie-breakers
+      if (query && query.length >= 3) {
+        const sorted = [...productsWithVariants].sort((a, b) => {
+          const sa = computeRelevanceScore(a, query)
+          const sb = computeRelevanceScore(b, query)
+          if (sb !== sa) return sb - sa
+
+          // Tie-breaker: for tampah daun packs, sort by ascending pack size
+          const pa = extractPackSize(a.name)
+          const pb = extractPackSize(b.name)
+          const aIsTD = normalizeText(a.name).includes('tampah daun')
+          const bIsTD = normalizeText(b.name).includes('tampah daun')
+          if (aIsTD && bIsTD) {
+            if (pa !== null && pb !== null) {
+              return pa - pb
+            }
+            if (pa !== null) return -1
+            if (pb !== null) return 1
+          }
+
+          // Next tie-breaker: names that start with the query phrase come first
+          const qNorm = normalizeText(query)
+          const aStarts = normalizeText(a.name).startsWith(qNorm) ? 1 : 0
+          const bStarts = normalizeText(b.name).startsWith(qNorm) ? 1 : 0
+          if (bStarts !== aStarts) return bStarts - aStarts
+
+          // Final fallback: newer first
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        })
+        return sorted
       }
 
+      return productsWithVariants
+    } catch (err) {
+      console.error('Error loading products:', err)
+      throw err
+    }
+  }, [user])
+  
+  // State for products data
+  const [products, setProducts] = useState<Product[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  
+  // Use debounced search hook only for search queries
+  const { data: searchResults, loading: searchLoading, onCompositionStart, onCompositionEnd } = useDebouncedSearch(
+    searchTerm,
+    searchProducts,
+    { min: 3, delay: 300, maxWait: 800 }
+  )
+  
+  // Load initial products on mount
+  useEffect(() => {
+    const loadInitialProducts = async () => {
+      if (!user) return
+      
+      setLoading(true)
       try {
-        setLoading(true)
-        setError(null)
-        
-        // Fetch products - only for the authenticated user
-        const { data: productsData, error: productsError } = await supabase
-          .from('products')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-        
-        if (productsError) throw productsError
-        
-        // Fetch variants for products that have variants
-        const productsWithVariants = await Promise.all(
-          (productsData || []).map(async (product) => {
-            if (product.has_variants) {
-              try {
-                const variants = await fetchProductVariants(product.id)
-                return { ...product, variants }
-              } catch (err) {
-                console.error(`Error fetching variants for product ${product.id}:`, err)
-                return product
-              }
-            }
-            return product
-          })
-        )
-        
-        setProducts(productsWithVariants)
-        setFilteredProducts(productsWithVariants)
-        
-      } catch (err) {
-        console.error('Error loading products:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load products')
+        const data = await searchProducts('')
+        setProducts(data)
+      } catch (error) {
+        console.error('Error loading initial products:', error)
+        setError('Failed to load products')
       } finally {
         setLoading(false)
       }
     }
-
-    loadProducts()
-  }, [user])
-
-  // Filter products based on search term
+    
+    loadInitialProducts()
+  }, [searchProducts, user])
+  
+  // Update products when search results change
   useEffect(() => {
-    if (searchTerm.length < 3) {
-      setFilteredProducts(products)
-    } else {
-      const filtered = products.filter(product => 
-        product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        product.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        product.status?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      setFilteredProducts(filtered)
+    if (searchTerm.length >= 3) {
+      setProducts(searchResults)
+    } else if (searchTerm.length === 0) {
+      // Reload initial products when search is cleared
+      const loadInitialProducts = async () => {
+        if (!user) return
+        
+        setLoading(true)
+        try {
+          const data = await searchProducts('')
+          setProducts(data)
+        } catch (error) {
+          console.error('Error loading initial products:', error)
+          setError('Failed to load products')
+        } finally {
+          setLoading(false)
+        }
+      }
+      
+      loadInitialProducts()
     }
-  }, [searchTerm, products])
+  }, [searchResults, searchTerm, searchProducts, user])
+  
+  // Determine current loading state
+  const isLoading = searchTerm.length >= 3 ? searchLoading : loading
+
+  // Sync newly added item into active edit snapshot so Cart reflects changes without DB fetch
+  const syncEditSnapshotAdd = (newItem: any) => {
+    if (!user) return
+    try {
+      const raw = localStorage.getItem(`edit_mode_data_${user.id}`)
+      if (!raw) return
+      const data = JSON.parse(raw)
+      const hasActiveEdit = data?.isEditMode || !!data?.existingDraftId
+      if (!hasActiveEdit) return
+
+      const items = Array.isArray(data.cartItems) ? [...data.cartItems] : []
+      const idx = items.findIndex((i: any) => (
+        i.product_id === newItem.product_id && (i.variant_id || null) === (newItem.variant_id || null)
+      ))
+      if (idx >= 0) {
+        items[idx].quantity = (items[idx].quantity || 0) + 1
+      } else {
+        items.push(newItem)
+      }
+      const updated = { ...data, cartItems: items, isEditMode: true }
+      localStorage.setItem(`edit_mode_data_${user.id}`, JSON.stringify(updated))
+      console.log('🧩 Synced added item to active edit snapshot:', { productId: newItem.product_id, variantId: newItem.variant_id || null })
+    } catch (e) {
+      console.log('⚠️ Failed to sync item into edit snapshot:', e)
+    }
+  }
 
   // Add to cart function
   const addToCart = async (product: Product) => {
@@ -150,6 +454,22 @@ const Products: React.FC = () => {
 
         if (insertError) throw insertError
       }
+
+      // Also reflect changes in active edit snapshot (if any), using edit-prefixed IDs
+      const newItem = {
+        id: `edit_${product.id}`,
+        user_id: user.id,
+        product_id: product.id,
+        quantity: 1,
+        price: product.price,
+        product: {
+          id: product.id,
+          name: product.name,
+          image: product.image || '',
+          price: product.price
+        }
+      }
+      syncEditSnapshotAdd(newItem)
 
       setSuccess('Product added to cart!')
       setTimeout(() => setSuccess(null), 3000)
@@ -217,6 +537,29 @@ const Products: React.FC = () => {
         if (insertError) throw insertError
       }
 
+      // Reflect variant addition in active edit snapshot as well
+      const newVariantItem = {
+        id: `edit_${product.id}-${variant.id}`,
+        user_id: user.id,
+        product_id: product.id,
+        variant_id: variant.id,
+        quantity: 1,
+        price: variant.price.toString(),
+        product: {
+          id: product.id,
+          name: product.name,
+          image: product.image || '',
+          price: product.price
+        },
+        variant: {
+          id: variant.id,
+          full_product_name: variant.full_product_name || product.name,
+          price: variant.price.toString(),
+          image_url: variant.image_url || ''
+        }
+      }
+      syncEditSnapshotAdd(newVariantItem)
+
       setSuccess(`${variant.full_product_name || 'Variant'} added to cart!`)
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
@@ -250,21 +593,35 @@ const Products: React.FC = () => {
   const sendToWhatsApp = async (product: Product) => {
     setError(null)
     setSuccess(null)
+    setIsSending(true)
     try {
       const message = generateProductMessage({ ...product, image_url: product.image })
-      await insertTextIntoWhatsApp(message, false)
-      setSuccess('Product message inserted into WhatsApp!')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (err: any) {
-      // Fallback to clipboard
-      try {
-        const message = generateProductMessage({ ...product, image_url: product.image })
-        await navigator.clipboard.writeText(message)
-        setError(err.message || 'WhatsApp not detected. Product message copied to clipboard!')
-      } catch (clipboardErr) {
-        setError('Failed to send to WhatsApp or copy to clipboard')
+      const result = await improvedSendToWhatsApp(message, product.image || undefined, true)
+      
+      if (result.success) {
+        // Show popup for image ready feedback instead of snackbar
+        if (product.image) {
+          setImageReadyMessage('Text sent to WhatsApp successfully! Please paste the image manually in WhatsApp Web using Ctrl+V (or Cmd+V on Mac).')
+          setShowImageReadyDialog(true)
+        } else {
+          setSuccess(result.message)
+          setTimeout(() => {
+            setSuccess(null)
+          }, 5000)
+        }
+      } else {
+        setError(result.message)
+        setTimeout(() => {
+          setError(null)
+        }, 5000)
       }
-      setTimeout(() => setError(null), 3000)
+    } catch (err: any) {
+      setError('Failed to send product to WhatsApp')
+      setTimeout(() => {
+        setError(null)
+      }, 3000)
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -272,21 +629,36 @@ const Products: React.FC = () => {
   const sendVariantToWhatsApp = async (product: Product, variant: ProductVariant) => {
     setError(null)
     setSuccess(null)
+    setIsSending(true)
     try {
       const message = generateVariantMessage(product, variant)
-      await insertTextIntoWhatsApp(message, false)
-      setSuccess('Variant message inserted into WhatsApp!')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (err: any) {
-      // Fallback to clipboard
-      try {
-        const message = generateVariantMessage(product, variant)
-        await navigator.clipboard.writeText(message)
-        setError(err.message || 'WhatsApp not detected. Variant message copied to clipboard!')
-      } catch (clipboardErr) {
-        setError('Failed to send to WhatsApp or copy to clipboard')
+      const variantImage = variant.image_url || product.image
+      const result = await improvedSendToWhatsApp(message, variantImage || undefined, true)
+      
+      if (result.success) {
+        // Show popup for image ready feedback instead of snackbar
+        if (variantImage || product.image) {
+          setImageReadyMessage('Text sent to WhatsApp successfully! Please paste the image manually in WhatsApp Web using Ctrl+V (or Cmd+V on Mac).')
+          setShowImageReadyDialog(true)
+        } else {
+          setSuccess(result.message)
+          setTimeout(() => {
+            setSuccess(null)
+          }, 5000)
+        }
+      } else {
+        setError(result.message)
+        setTimeout(() => {
+          setError(null)
+        }, 5000)
       }
-      setTimeout(() => setError(null), 3000)
+    } catch (err: any) {
+      setError('Failed to send variant to WhatsApp')
+      setTimeout(() => {
+        setError(null)
+      }, 3000)
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -338,21 +710,34 @@ const Products: React.FC = () => {
   }
 
   return (
-    <div className="w-full space-y-4">
+    <div className="w-full space-y-4 page-container">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Products</h2>
         </div>
         <div className="flex items-center space-x-3">
-          <button
-            onClick={() => navigate('/products/create')}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            <span>Add Product</span>
-          </button>
+          {hasPermission('can_bulk_create_products') && (
+            <button
+              onClick={() => navigate('/products/bulk-create')}
+              className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              <span>Bulk</span>
+            </button>
+          )}
+          {hasPermission('can_create_products') && (
+            <button
+              onClick={() => navigate('/products/create')}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              <span>Add</span>
+            </button>
+          )}
         </div>
       </div>
       
@@ -368,6 +753,8 @@ const Products: React.FC = () => {
           placeholder="Search products (min 3 characters)..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
         />
       </div>
@@ -396,7 +783,16 @@ const Products: React.FC = () => {
         </div>
       )}
       
-      {filteredProducts.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-8">
+          <div className="text-gray-400 mb-2">
+            <svg className="w-8 h-8 mx-auto animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </div>
+          <p className="text-gray-500">Loading products...</p>
+        </div>
+      ) : !products || products.length === 0 ? (
         <div className="text-center py-8">
           <div className="text-gray-400 mb-2">
             <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,7 +803,7 @@ const Products: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-          {filteredProducts.map((product) => (
+          {(products || []).map((product) => (
             <div 
               key={product.id} 
               className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
@@ -416,11 +812,7 @@ const Products: React.FC = () => {
                 <div className="flex items-start space-x-3 flex-1">
                   <div className="flex-shrink-0">
                     <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
-                      <img 
-                        src={product.image || `data:image/svg+xml;base64,${btoa(`<svg width="48" height="48" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" fill="#f3f4f6"/><text x="50%" y="50%" font-size="16" fill="#9ca3af" text-anchor="middle" dy=".3em">${product.name?.charAt(0)?.toUpperCase() || 'P'}</text></svg>`)}`}
-                        alt={product.name || 'Product'}
-                        className="w-full h-full object-cover"
-                      />
+                      <ProductImageDisplay productId={product.id} productName={product.name} />
                     </div>
                   </div>
                   <div className="flex-1 min-w-0">
@@ -512,7 +904,10 @@ const Products: React.FC = () => {
                         e.stopPropagation();
                         sendToWhatsApp(product);
                       }}
-                      className="flex items-center justify-center w-8 h-8 bg-green-600 text-white rounded-full hover:bg-green-700 transition-colors shadow-sm"
+                      disabled={isSending}
+                      className={`flex items-center justify-center w-8 h-8 bg-green-600 text-white rounded-full transition-colors shadow-sm ${
+                        isSending ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-700'
+                      }`}
                       title="Send to WhatsApp"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -524,7 +919,7 @@ const Products: React.FC = () => {
               </div>
               
               {/* Expanded Variants Section - Full Width */}
-              {product.has_variants && product.variants && expandedProducts.has(product.id) && (
+              {(product.has_variants && product.variants && expandedProducts.has(product.id)) && (
                 <div className="mt-3 pt-3 border-t border-gray-100">
                   <div className="divide-y divide-gray-100">
                     {product.variants.map((variant, index) => (
@@ -580,7 +975,10 @@ const Products: React.FC = () => {
                           </button>
                           <button
                             onClick={() => sendVariantToWhatsApp(product, variant)}
-                            className="flex items-center justify-center w-8 h-8 bg-green-600 text-white rounded-full hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+                            disabled={isSending}
+                            className={`flex items-center justify-center w-8 h-8 bg-green-600 text-white rounded-full transition-colors shadow-sm ${
+                              isSending ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-700'
+                            }`}
                             title="Send to WhatsApp"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -597,6 +995,39 @@ const Products: React.FC = () => {
           ))}
         </div>
       )}
+
+      {/* Image Ready Dialog */}
+      <Dialog 
+        isOpen={showImageReadyDialog} 
+        onClose={() => setShowImageReadyDialog(false)}
+        title="Image Ready"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center space-x-3">
+            <div className="flex-shrink-0">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p className="text-gray-700">{imageReadyMessage}</p>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button 
+              onClick={() => setShowImageReadyDialog(false)}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* Loading Dialog - Uninterruptible */}
+      <LoadingDialog 
+        isOpen={isSending}
+        message={isSending ? 'Sending text and image to WhatsApp...' : ''}
+      />
+
     </div>
   )
 }

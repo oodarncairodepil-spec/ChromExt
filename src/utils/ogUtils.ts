@@ -1,4 +1,5 @@
 // Utility functions for generating WhatsApp messages with OG previews and image links
+import { htmlToPlainText } from './htmlToText'
 
 interface Template {
   id?: string;
@@ -27,22 +28,12 @@ interface ProductVariant {
  * @returns Formatted message with image links
  */
 export function generateWhatsAppMessage(template: Template): string {
-  let message = template.message || '';
-  
-  // Add template preview URL if template has ID and image
-  if (template.id && template.image_url) {
-    const templatePreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?template_id=${template.id}`;
-    message += `\n\n${templatePreviewUrl}`;
+  // Format template message (convert HTML to plain text if needed)
+  const message = template.message || '';
+  if (message) {
+    return htmlToPlainText(message);
   }
-  
-  // Add product preview URL if template is linked to a product
-  if (template.product_id) {
-    // Generate product preview URL using Supabase function
-    const productPreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?product_id=${template.product_id}`;
-    message += `\n\n${productPreviewUrl}`;
-  }
-  
-  return message;
+  return '';
 }
 
 /**
@@ -51,15 +42,21 @@ export function generateWhatsAppMessage(template: Template): string {
  * @param variantId - Optional variant ID for variant-specific preview
  * @returns Message with product image link
  */
-export function generateProductMessage(product: Product, variantId?: string): string {
-  let message = `Check out this product: ${product.name || 'Product'}`;
+export function generateProductMessage(product: any, variantId?: string): string {
+  let message = `${product.name || 'Product'}`;
   
-  // Use preview URL for proper WhatsApp preview generation
-  let productPreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?product_id=${product.id}`;
-  if (variantId) {
-    productPreviewUrl += `&variant_id=${variantId}`;
+  // Add product description if available (format HTML to plain text)
+  if (product.description) {
+    const formattedDescription = htmlToPlainText(product.description);
+    if (formattedDescription) {
+      message += `\n\n${formattedDescription}`;
+    }
   }
-  message += `\n ${productPreviewUrl}`;
+  
+  // Add price if available
+  if (product.price) {
+    message += `\n\nPrice: ${product.price}`;
+  }
   
   return message;
 }
@@ -70,12 +67,33 @@ export function generateProductMessage(product: Product, variantId?: string): st
  * @param variant - Variant object with variant details
  * @returns Message with variant-specific preview link
  */
-export function generateVariantMessage(product: Product, variant: ProductVariant): string {
-  let message = `Check out this product: ${variant.full_product_name || product.name || 'Product'}`;
+export function generateVariantMessage(product: any, variant: any): string {
+  let message = `${variant.full_product_name || product.name || 'Product'}`;
   
-  // Use preview URL with variant_id for proper WhatsApp preview generation
-  const variantPreviewUrl = `https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?product_id=${product.id}&variant_id=${variant.id}`;
-  message += `\n ${variantPreviewUrl}`;
+  // Add variant details if available
+  if (variant.option_1_name && variant.option_1_value) {
+    message += `\n${variant.option_1_name}: ${variant.option_1_value}`;
+  }
+  if (variant.option_2_name && variant.option_2_value) {
+    message += `\n${variant.option_2_name}: ${variant.option_2_value}`;
+  }
+  if (variant.option_3_name && variant.option_3_value) {
+    message += `\n${variant.option_3_name}: ${variant.option_3_value}`;
+  }
+  
+  // Add product description if available (format HTML to plain text)
+  if (product.description) {
+    const formattedDescription = htmlToPlainText(product.description);
+    if (formattedDescription) {
+      message += `\n\n${formattedDescription}`;
+    }
+  }
+  
+  // Add variant price if available, otherwise product price
+  const price = variant.price || product.price;
+  if (price) {
+    message += `\n\nPrice: ${price}`;
+  }
   
   return message;
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '../contexts/AuthContext'
+import { PermissionProvider, usePermissions } from '../contexts/PermissionContext'
 import TabBar from '../components/TabBar'
 import Header from '../components/Header'
 import Home from '../pages/Home'
@@ -16,7 +17,10 @@ import Register from '../pages/Register'
 import TokenConfirmation from '../pages/TokenConfirmation'
 import ProductDetail from '../pages/ProductDetail'
 import ProductCreate from '../pages/ProductCreate'
+import BulkProductCreate from '../pages/BulkProductCreate'
 import UserDetail from '../pages/UserDetail'
+import StaffManagement from '../pages/StaffManagement'
+import ProtectedRoute from '../components/ProtectedRoute'
 import UserCreate from '../pages/UserCreate'
 import TemplateDetail from '../pages/TemplateDetail'
 import TemplateCreate from '../pages/TemplateCreate'
@@ -33,10 +37,11 @@ export type TabType = 'home' | 'products' | 'orders' | 'templates' | 'cart'
 const AuthenticatedApp: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const { user, loading, signOut } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const location = useLocation()
   const navigate = useNavigate()
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <Loading />
   }
 
@@ -63,7 +68,7 @@ const AuthenticatedApp: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-full bg-gray-50 flex flex-col transition-all duration-300">
+    <div className="min-h-screen w-full bg-gray-50 flex flex-col transition-all duration-300">
       <Header 
         isCollapsed={isCollapsed} 
         onToggleCollapse={() => setIsCollapsed(!isCollapsed)}
@@ -71,29 +76,103 @@ const AuthenticatedApp: React.FC = () => {
         onSignOut={signOut}
       />
       
-      <main className={`flex-1 overflow-y-auto transition-all duration-300 pb-20 ${
+      <main className={`flex-1 transition-all duration-300 pb-16 ${
         isCollapsed ? 'p-2' : 'p-4'
       }`}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/home" element={<Home />} />
-          <Route path="/products" element={<Products />} />
-          <Route path="/products/create" element={<ProductCreate />} />
-          <Route path="/products/:id" element={<ProductDetail />} />
-          <Route path="/users" element={<Users />} />
-          <Route path="/users/create" element={<UserCreate />} />
-          <Route path="/users/:id" element={<UserDetail />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/orders/:id" element={<OrderDetail />} />
+          <Route path="/products" element={
+            <ProtectedRoute permission="can_view_products">
+              <Products />
+            </ProtectedRoute>
+          } />
+          <Route path="/products/create" element={
+            <ProtectedRoute permission="can_create_products">
+              <ProductCreate />
+            </ProtectedRoute>
+          } />
+          <Route path="/products/bulk-create" element={
+            <ProtectedRoute permission="can_bulk_create_products">
+              <BulkProductCreate />
+            </ProtectedRoute>
+          } />
+          <Route path="/products/:id" element={
+            <ProtectedRoute permission="can_view_products">
+              <ProductDetail />
+            </ProtectedRoute>
+          } />
+          <Route path="/users" element={
+            <ProtectedRoute permission="can_view_users">
+              <Users />
+            </ProtectedRoute>
+          } />
+          <Route path="/users/create" element={
+            <ProtectedRoute permission="can_view_users">
+              <UserCreate />
+            </ProtectedRoute>
+          } />
+          <Route path="/users/:id" element={
+            <ProtectedRoute permission="can_view_users">
+              <UserDetail />
+            </ProtectedRoute>
+          } />
+          <Route path="/orders" element={
+            <ProtectedRoute permission="can_view_orders">
+              <Orders />
+            </ProtectedRoute>
+          } />
+          <Route path="/orders/:id" element={
+            <ProtectedRoute permission="can_view_orders">
+              <OrderDetail />
+            </ProtectedRoute>
+          } />
 
-          <Route path="/templates" element={<Templates />} />
-          <Route path="/templates/create" element={<TemplateCreate />} />
-          <Route path="/templates/:id" element={<TemplateDetail />} />
-          <Route path="/cart" element={<Cart />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/payment-method" element={<PaymentMethod />} />
-          <Route path="/shipping-courier" element={<ShippingCourier />} />
-          <Route path="/integration" element={<Integration />} />
+          <Route path="/templates" element={
+            <ProtectedRoute permission="can_view_templates">
+              <Templates />
+            </ProtectedRoute>
+          } />
+          <Route path="/templates/create" element={
+            <ProtectedRoute permission="can_create_templates">
+              <TemplateCreate />
+            </ProtectedRoute>
+          } />
+          <Route path="/templates/:id" element={
+            <ProtectedRoute permission="can_view_templates">
+              <TemplateDetail />
+            </ProtectedRoute>
+          } />
+          <Route path="/cart" element={
+            <ProtectedRoute permission="can_view_cart">
+              <Cart />
+            </ProtectedRoute>
+          } />
+          <Route path="/profile" element={
+            <ProtectedRoute permission="can_access_profile">
+              <Profile />
+            </ProtectedRoute>
+          } />
+          <Route path="/payment-method" element={
+            <ProtectedRoute permission="can_access_payment_methods">
+              <PaymentMethod />
+            </ProtectedRoute>
+          } />
+          <Route path="/shipping-courier" element={
+            <ProtectedRoute permission="can_access_shipping_courier">
+              <ShippingCourier />
+            </ProtectedRoute>
+          } />
+          <Route path="/integration" element={
+            <ProtectedRoute permission="can_access_integration">
+              <Integration />
+            </ProtectedRoute>
+          } />
+          <Route path="/staff" element={
+            <ProtectedRoute requireOwner={true}>
+              <StaffManagement />
+            </ProtectedRoute>
+          } />
           <Route path="/test" element={<Test />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -110,9 +189,11 @@ const AuthenticatedApp: React.FC = () => {
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <Router>
-        <AuthenticatedApp />
-      </Router>
+      <PermissionProvider>
+        <Router>
+          <AuthenticatedApp />
+        </Router>
+      </PermissionProvider>
     </AuthProvider>
   )
 }

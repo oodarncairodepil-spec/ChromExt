@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
+import { isStaffEmail, autoConfirmStaffEmail } from '../utils/staffUtils';
+import { supabase, supabaseAdmin } from '../lib/supabase';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -15,21 +17,23 @@ const Login: React.FC = () => {
     // Check for email verification success
     const checkVerificationSuccess = async () => {
       try {
-        const result = await chrome.storage.local.get(['email_verification_success', 'verification_timestamp']);
-        if (result.email_verification_success) {
-          // Show success message if verification happened recently (within last 5 minutes)
-          const timeDiff = Date.now() - (result.verification_timestamp || 0);
-          if (timeDiff < 5 * 60 * 1000) {
-            setShowVerificationSuccess(true);
-            // Clear the flag after showing
-            setTimeout(() => {
-              chrome.storage.local.remove(['email_verification_success', 'verification_timestamp']);
-              setShowVerificationSuccess(false);
-            }, 5000);
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          const result = await chrome.storage.local.get(['email_verification_success', 'verification_timestamp']);
+          if (result.email_verification_success) {
+            // Show success message if verification happened recently (within last 5 minutes)
+            const timeDiff = Date.now() - (result.verification_timestamp || 0);
+            if (timeDiff < 5 * 60 * 1000) {
+              setShowVerificationSuccess(true);
+              // Clear the flag after showing
+              setTimeout(() => {
+                chrome.storage.local.remove(['email_verification_success', 'verification_timestamp']);
+                setShowVerificationSuccess(false);
+              }, 5000);
+            }
           }
         }
       } catch (error) {
-        console.log('Could not check verification status:', error);
+        // Silently handle errors - chrome.storage might not be available in browser environment
       }
     };
 
@@ -46,10 +50,61 @@ const Login: React.FC = () => {
     if (error) {
       // Check if the error is due to unverified email
       if (error.message.includes('Email not confirmed') || error.message.includes('email_not_confirmed')) {
-        navigate('/token-confirmation');
-        return;
+        // Check if this email belongs to a staff account
+        const isStaff = await isStaffEmail(email);
+        
+        if (isStaff) {
+          // Try to auto-confirm staff email using Admin API
+          try {
+            if (supabaseAdmin) {
+              // Get user by email using Admin API
+              const { data: userData, error: getUserError } = await supabaseAdmin.auth.admin.getUserByEmail(email)
+
+              if (!getUserError && userData?.user?.id) {
+                // Try to auto-confirm the email
+                const confirmResult = await autoConfirmStaffEmail(userData.user.id)
+                
+                if (confirmResult.success) {
+                  // Retry login after auto-confirmation
+                  const { error: retryError } = await signIn(email, password)
+                  
+                  if (retryError) {
+                    setError(retryError.message)
+                  } else {
+                    navigate('/users')
+                  }
+                  setLoading(false)
+                  return
+                } else {
+                  console.warn('Auto-confirm failed:', confirmResult.error)
+                }
+              } else {
+                console.warn('Could not get user by email:', getUserError)
+              }
+            } else {
+              console.warn('Admin API not available - cannot auto-confirm staff email')
+            }
+
+            // If auto-confirm failed or Admin API not available, redirect to token confirmation as fallback
+            console.warn('Redirecting staff to token confirmation as fallback')
+            navigate('/token-confirmation')
+            setLoading(false)
+            return
+          } catch (confirmErr: any) {
+            console.error('Error during staff email auto-confirmation:', confirmErr)
+            // Fall through to token confirmation
+            navigate('/token-confirmation')
+            setLoading(false)
+            return
+          }
+        } else {
+          // Not a staff account, redirect to token confirmation
+          navigate('/token-confirmation');
+          return;
+        }
+      } else {
+        setError(error.message);
       }
-      setError(error.message);
     } else {
       navigate('/users');
     }
@@ -58,7 +113,7 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 page-container">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
           Sign in to your account

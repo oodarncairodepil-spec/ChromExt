@@ -1,5 +1,6 @@
 import React from 'react'
 import { TabType } from '../sidepanel/App'
+import { usePermissions } from '../contexts/PermissionContext'
 
 interface TabBarProps {
   activeTab: TabType
@@ -7,7 +8,9 @@ interface TabBarProps {
 }
 
 const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
-  const tabs = [
+  const { hasPermission } = usePermissions()
+  
+  const allTabs = [
     {
       id: 'home' as TabType,
       label: 'Home',
@@ -54,6 +57,24 @@ const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange }) => {
       )
     }
   ]
+
+  // Filter tabs based on permissions
+  const tabs = allTabs.filter(tab => {
+    switch (tab.id) {
+      case 'products':
+        return hasPermission('can_view_products')
+      case 'orders':
+        return hasPermission('can_view_orders')
+      case 'templates':
+        return hasPermission('can_view_templates')
+      case 'cart':
+        return hasPermission('can_view_cart')
+      case 'home':
+        return true // Home is always accessible
+      default:
+        return true
+    }
+  })
 
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clipboard Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        #imagePreview {
+            max-width: 300px;
+            max-height: 200px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Clipboard Functionality Test</h1>
+    <p>This page tests the clipboard functionality used in the Chrome extension.</p>
+
+    <div class="test-section">
+        <h2>1. Test Image URL to Clipboard</h2>
+        <p>Test copying an image from URL to clipboard (similar to the extension's functionality)</p>
+        <input type="url" id="imageUrl" placeholder="Enter image URL" style="width: 400px; padding: 8px;" 
+               value="https://via.placeholder.com/300x200/007cba/ffffff?text=Test+Image">
+        <br>
+        <button onclick="testImageCopy()">Copy Image to Clipboard</button>
+        <button onclick="testPasteImage()">Paste Image from Clipboard</button>
+        <div id="imageResult"></div>
+        <img id="imagePreview" style="display: none;">
+    </div>
+
+    <div class="test-section">
+        <h2>2. Test Text to Clipboard</h2>
+        <p>Test copying text to clipboard</p>
+        <textarea id="textInput" placeholder="Enter text to copy" style="width: 400px; height: 100px; padding: 8px;">
+Product: Test Product
+Price: Rp 150,000
+Description: This is a test product for clipboard functionality.
+        </textarea>
+        <br>
+        <button onclick="testTextCopy()">Copy Text to Clipboard</button>
+        <button onclick="testPasteText()">Paste Text from Clipboard</button>
+        <div id="textResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Test Combined Text + Image</h2>
+        <p>Test copying both text and image (simulating the extension's behavior)</p>
+        <button onclick="testCombinedCopy()">Copy Text + Image</button>
+        <button onclick="checkClipboardContents()">Check Clipboard Contents</button>
+        <div id="combinedResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Browser Compatibility Check</h2>
+        <button onclick="checkBrowserSupport()">Check Browser Support</button>
+        <div id="browserResult"></div>
+    </div>
+
+    <script>
+        function showResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="result ${type}">${message}</div>`;
+        }
+
+        async function testImageCopy() {
+            const imageUrl = document.getElementById('imageUrl').value;
+            if (!imageUrl) {
+                showResult('imageResult', 'Please enter an image URL', 'error');
+                return;
+            }
+
+            try {
+                showResult('imageResult', 'Fetching image...', 'info');
+                
+                // Fetch the image (same as extension code)
+                const response = await fetch(imageUrl);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch image: ${response.status}`);
+                }
+                
+                // Convert to blob
+                const blob = await response.blob();
+                console.log('Image blob created:', blob.size, 'bytes, type:', blob.type);
+                
+                // Determine MIME type (same logic as extension)
+                let mimeType = blob.type;
+                if (!mimeType || mimeType === 'application/octet-stream') {
+                    const extension = imageUrl.split('.').pop()?.toLowerCase();
+                    switch (extension) {
+                        case 'jpg':
+                        case 'jpeg':
+                            mimeType = 'image/jpeg';
+                            break;
+                        case 'png':
+                            mimeType = 'image/png';
+                            break;
+                        case 'gif':
+                            mimeType = 'image/gif';
+                            break;
+                        case 'webp':
+                            mimeType = 'image/webp';
+                            break;
+                        default:
+                            mimeType = 'image/png';
+                    }
+                }
+                
+                // Copy to clipboard
+                await navigator.clipboard.write([
+                    new ClipboardItem({
+                        [mimeType]: blob
+                    })
+                ]);
+                
+                showResult('imageResult', `✅ Image copied to clipboard successfully! (${blob.size} bytes, ${mimeType})`, 'success');
+            } catch (error) {
+                console.error('Failed to copy image:', error);
+                showResult('imageResult', `❌ Failed to copy image: ${error.message}`, 'error');
+            }
+        }
+
+        async function testPasteImage() {
+            try {
+                const clipboardItems = await navigator.clipboard.read();
+                console.log('Clipboard items:', clipboardItems.length);
+                
+                let hasImage = false;
+                for (const item of clipboardItems) {
+                    console.log('Clipboard item types:', item.types);
+                    if (item.types.some(type => type.startsWith('image/'))) {
+                        hasImage = true;
+                        const imageType = item.types.find(type => type.startsWith('image/'));
+                        const blob = await item.getType(imageType);
+                        
+                        // Display the image
+                        const url = URL.createObjectURL(blob);
+                        const preview = document.getElementById('imagePreview');
+                        preview.src = url;
+                        preview.style.display = 'block';
+                        
+                        showResult('imageResult', `✅ Image pasted from clipboard! (${blob.size} bytes, ${imageType})`, 'success');
+                        break;
+                    }
+                }
+                
+                if (!hasImage) {
+                    showResult('imageResult', '⚠️ No image found in clipboard', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to paste image:', error);
+                showResult('imageResult', `❌ Failed to paste image: ${error.message}`, 'error');
+            }
+        }
+
+        async function testTextCopy() {
+            const text = document.getElementById('textInput').value;
+            try {
+                await navigator.clipboard.writeText(text);
+                showResult('textResult', '✅ Text copied to clipboard successfully!', 'success');
+            } catch (error) {
+                console.error('Failed to copy text:', error);
+                showResult('textResult', `❌ Failed to copy text: ${error.message}`, 'error');
+            }
+        }
+
+        async function testPasteText() {
+            try {
+                const text = await navigator.clipboard.readText();
+                showResult('textResult', `✅ Text pasted from clipboard: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`, 'success');
+            } catch (error) {
+                console.error('Failed to paste text:', error);
+                showResult('textResult', `❌ Failed to paste text: ${error.message}`, 'error');
+            }
+        }
+
+        async function testCombinedCopy() {
+            const imageUrl = document.getElementById('imageUrl').value;
+            const text = document.getElementById('textInput').value;
+            
+            if (!imageUrl || !text) {
+                showResult('combinedResult', 'Please enter both image URL and text', 'error');
+                return;
+            }
+
+            try {
+                // First copy image
+                showResult('combinedResult', 'Step 1: Copying image...', 'info');
+                await testImageCopy();
+                
+                // Wait a bit
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Then copy text (this will overwrite clipboard)
+                showResult('combinedResult', 'Step 2: Copying text...', 'info');
+                await navigator.clipboard.writeText(text);
+                
+                showResult('combinedResult', '⚠️ Combined copy completed, but text overwrote image (expected behavior)', 'info');
+            } catch (error) {
+                console.error('Failed combined copy:', error);
+                showResult('combinedResult', `❌ Failed combined copy: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkClipboardContents() {
+            try {
+                const clipboardItems = await navigator.clipboard.read();
+                let contents = [];
+                
+                for (const item of clipboardItems) {
+                    contents.push(`Item types: ${item.types.join(', ')}`);
+                    
+                    for (const type of item.types) {
+                        if (type === 'text/plain') {
+                            const text = await navigator.clipboard.readText();
+                            contents.push(`Text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"}`);
+                        } else if (type.startsWith('image/')) {
+                            const blob = await item.getType(type);
+                            contents.push(`Image: ${type}, ${blob.size} bytes`);
+                        }
+                    }
+                }
+                
+                showResult('combinedResult', `📋 Clipboard contents:\n${contents.join('\n')}`, 'info');
+            } catch (error) {
+                console.error('Failed to check clipboard:', error);
+                showResult('combinedResult', `❌ Failed to check clipboard: ${error.message}`, 'error');
+            }
+        }
+
+        function checkBrowserSupport() {
+            const features = {
+                'Clipboard API': !!navigator.clipboard,
+                'Clipboard read': !!(navigator.clipboard && navigator.clipboard.read),
+                'Clipboard write': !!(navigator.clipboard && navigator.clipboard.write),
+                'Clipboard readText': !!(navigator.clipboard && navigator.clipboard.readText),
+                'Clipboard writeText': !!(navigator.clipboard && navigator.clipboard.writeText),
+                'Secure Context': window.isSecureContext,
+                'HTTPS': location.protocol === 'https:',
+                'User Agent': navigator.userAgent
+            };
+            
+            let result = '<h3>Browser Support Check:</h3>';
+            for (const [feature, supported] of Object.entries(features)) {
+                const status = supported ? '✅' : '❌';
+                result += `<div>${status} ${feature}: ${supported}</div>`;
+            }
+            
+            showResult('browserResult', result, 'info');
+        }
+
+        // Auto-check browser support on load
+        window.addEventListener('load', checkBrowserSupport);
+    </script>
+</body>
+</html>

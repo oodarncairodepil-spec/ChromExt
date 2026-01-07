@@ -111,10 +111,9 @@ export async function createDefaultOrderSummaryTemplate(userId: string): Promise
         return false;
       }
 
-      console.log(`Successfully created ${templatesToCreate.length} order summary templates for user:`, userId, data);
-    } else {
-      console.log('Order summary templates already exist for user:', userId);
+      // Templates created successfully
     }
+    // Templates already exist - no action needed
 
     return true;
   } catch (error) {

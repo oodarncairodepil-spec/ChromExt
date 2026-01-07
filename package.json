@@ -7,9 +7,10 @@
   "scripts": {
     "dev": "plasmo dev --target=chrome-mv3-dev",
     "dev:web": "plasmo dev --target=web",
+    "dev:browser": "vite",
     "fix-dev-manifest": "node -e \"const fs = require('fs'); const path = 'build/chrome-mv3-dev-dev/manifest.json'; if (fs.existsSync(path)) { const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting', 'storage']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*', 'http://localhost:*/*']; fs.writeFileSync(path, JSON.stringify(manifest, null, 2)); console.log('Dev manifest permissions fixed!'); } else { console.log('Dev manifest not found!'); }\"",
     "dev-original": "plasmo dev",
-    "build": "plasmo build --target=chrome-mv3-prod && node -e \"const fs = require('fs'); const manifest = JSON.parse(fs.readFileSync('build/chrome-mv3-prod-prod/manifest.json', 'utf8')); manifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting', 'storage']; manifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*', 'http://localhost:*/*']; fs.writeFileSync('build/chrome-mv3-prod-prod/manifest.json', JSON.stringify(manifest, null, 2));\"",
+    "build": "node -e \"const fs = require('fs'); const manifestPath = 'src/manifest.json'; const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); const versionParts = manifest.version.split('.'); versionParts[2] = String(parseInt(versionParts[2]) + 1); manifest.version = versionParts.join('.'); fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); console.log('✅ Version incremented to', manifest.version);\" && plasmo build --target=chrome-mv3-prod && node -e \"const fs = require('fs'); const srcManifest = JSON.parse(fs.readFileSync('src/manifest.json', 'utf8')); const buildManifestPath = 'build/chrome-mv3-prod-prod/manifest.json'; const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, 'utf8')); buildManifest.version = srcManifest.version; buildManifest.permissions = ['sidePanel', 'activeTab', 'tabs', 'scripting', 'storage']; buildManifest.host_permissions = ['https://*/*', 'https://web.whatsapp.com/*', 'http://localhost:*/*']; fs.writeFileSync(buildManifestPath, JSON.stringify(buildManifest, null, 2)); console.log('✅ Build manifest version updated to', buildManifest.version);\"",
     "package": "plasmo package",
     "resize-images": "ts-node scripts/batchResizeImages.ts"
   },
@@ -17,6 +18,7 @@
     "@supabase/supabase-js": "^2.74.0",
     "@types/react-router-dom": "^5.3.3",
     "dotenv": "^17.2.3",
+    "papaparse": "^5.4.1",
     "plasmo": "0.90.5",
     "react": "18.2.0",
     "react-dom": "18.2.0",
@@ -24,13 +26,16 @@
   },
   "devDependencies": {
     "@types/chrome": "0.0.258",
-    "@types/node": "20.10.6",
+    "@types/node": "^20.10.6",
+    "@types/papaparse": "^5.3.14",
     "@types/react": "18.2.46",
     "@types/react-dom": "18.2.18",
+    "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "ts-node": "^10.9.2",
-    "typescript": "5.3.3"
+    "typescript": "5.3.3",
+    "vite": "^7.3.0"
   }
 }

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { ensureDefaultTemplates } from '../lib/defaultTemplates';
 
 interface AuthContextType {
   user: User | null;
@@ -33,6 +34,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      
+      // Ensure default templates exist for existing users (non-blocking)
+      if (session?.user) {
+        ensureDefaultTemplates(session.user.id).catch(error => {
+          console.error('Failed to ensure default templates:', error);
+        });
+      }
     };
 
     getSession();
@@ -43,6 +51,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+        
+        // Create default templates when user signs in (non-blocking)
+        if (event === 'SIGNED_IN' && session?.user) {
+          ensureDefaultTemplates(session.user.id).catch(error => {
+            console.error('Failed to ensure default templates:', error);
+          });
+        }
       }
     );
 

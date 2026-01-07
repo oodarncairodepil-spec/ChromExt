@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import Dialog from '../components/Dialog'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
+import useDebouncedSearch from '../hooks/useDebouncedSearch'
 
 interface User {
   id: string;
@@ -22,13 +24,37 @@ interface User {
 const Users: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { ownerId, isStaff } = usePermissions()
   const [isDetecting, setIsDetecting] = useState(false)
-  const [users, setUsers] = useState<User[]>([])
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([])
   const [userCarts, setUserCarts] = useState<Record<string, number>>({})
-  const [loading, setLoading] = useState(true)
+  const [userOrders, setUserOrders] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  
+  // Create search function for the hook
+  const searchUsers = useCallback(async (query: string): Promise<User[]> => {
+    if (!user) {
+      throw new Error('Authentication required');
+    }
+    return await loadUsersData(query);
+  }, [user]);
+  
+  // State for users data
+  const [users, setUsers] = useState<User[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  
+  // Use debounced search hook only for search queries
+  const { data: searchResults, loading: searchLoading, onCompositionStart, onCompositionEnd } = useDebouncedSearch(
+    searchTerm,
+    searchUsers,
+    { min: 3, delay: 300, maxWait: 800 }
+  )
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const ITEMS_PER_PAGE = 10
   
   // Dialog states
   const [showUserFoundDialog, setShowUserFoundDialog] = useState(false)
@@ -36,78 +62,153 @@ const Users: React.FC = () => {
   const [showErrorDialog, setShowErrorDialog] = useState(false)
   const [dialogContent, setDialogContent] = useState({ phone: '', userName: '', message: '' })
 
-  useEffect(() => {
-    const loadUsersData = async () => {
-      if (!user) {
-        setError('Authentication required')
-        setLoading(false)
-        return
-      }
+  const loadUsersData = async (searchQuery = '') => {
+    if (!user) {
+      throw new Error('Authentication required');
+    }
 
-      try {
-        setLoading(true)
-        setError(null)
-        
-        // Fetch all users that belong to this shop owner using user_id
-        const { data: usersData, error: usersError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-        
-        if (usersError) throw usersError
-        
-        setUsers(usersData || [])
-        setFilteredUsers(usersData || [])
-        
-        // Count orders per customer
-        const orderCounts: {[key: string]: number} = {}
-        if (usersData && usersData.length > 0) {
-          const userIds = usersData.map(u => u.id)
+    try {
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/c4dca2cc-238f-43ad-af27-831a7b92127a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Users.tsx:68',message:'loadUsersData called',data:{userId:user.id,isStaff:isStaff,ownerId:ownerId,userIdToUse:userIdToUse,usingOwnerId:isStaff&&ownerId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      // Build query with search functionality
+      let query = supabase
+        .from('users')
+        .select('*')
+        .eq('user_id', userIdToUse)
+      
+      // Add search filters if search query is provided
+      if (searchQuery && searchQuery.length >= 3) {
+        query = query.or(`name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%,district.ilike.%${searchQuery}%`)
+      }
+      
+      // Apply ordering and pagination
+      const { data: usersData, error: usersError } = await query
+        .order('created_at', { ascending: false })
+        .limit(200)
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/c4dca2cc-238f-43ad-af27-831a7b92127a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Users.tsx:84',message:'Users query result',data:{userCount:usersData?.length||0,userIdToUse:userIdToUse,error:usersError?.message||null,errorCode:usersError?.code||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      if (usersError) throw usersError
+      
+      // Count orders per customer by matching customer_phone
+      const orderCounts: {[key: string]: number} = {}
+      if (usersData && usersData.length > 0) {
+        const userPhones = usersData.map(u => u.phone).filter(Boolean)
+        if (userPhones.length > 0) {
           const { data: orderCountData, error: orderCountError } = await supabase
             .from('orders')
-            .select('buyer_id')
+            .select('customer_phone')
             .eq('seller_id', user.id)
-            .in('buyer_id', userIds)
+            .in('customer_phone', userPhones)
           
           if (!orderCountError && orderCountData) {
+            // Count orders per phone number
+            const phoneOrderCounts: {[key: string]: number} = {}
             orderCountData.forEach((order: any) => {
-              if (order.buyer_id) {
-                orderCounts[order.buyer_id] = (orderCounts[order.buyer_id] || 0) + 1
+              if (order.customer_phone) {
+                phoneOrderCounts[order.customer_phone] = (phoneOrderCounts[order.customer_phone] || 0) + 1
+              }
+            })
+            
+            // Map phone numbers back to user IDs
+            usersData.forEach((u: User) => {
+              if (u.phone && phoneOrderCounts[u.phone]) {
+                orderCounts[u.id] = phoneOrderCounts[u.phone]
               }
             })
           }
         }
-        setUserCarts(orderCounts)
-        
-      } catch (err) {
-        console.error('Error loading users:', err)
-        // Only set error if it's not a "no rows" type error
-        if (err instanceof Error && !err.message.includes('no rows')) {
-          setError(err.message)
-        }
+      }
+      
+      // Update user orders state
+      setUserOrders(orderCounts)
+      
+      return usersData || [];
+      
+    } catch (err) {
+      console.error('Error loading users:', err)
+      throw err;
+    }
+  }
+
+  // Load initial users on mount
+  useEffect(() => {
+    const loadInitialUsers = async () => {
+      if (!user) return
+      
+      setLoading(true)
+      try {
+        const data = await loadUsersData('')
+        setUsers(data)
+      } catch (error) {
+        console.error('Error loading initial users:', error)
+        setError('Failed to load users')
       } finally {
         setLoading(false)
       }
     }
-
-    loadUsersData()
+    
+    loadInitialUsers()
   }, [user])
-
-  // Filter users based on search term
+  
+  // Update users when search results change
   useEffect(() => {
-    if (searchTerm.length < 3) {
-      setFilteredUsers(users)
-    } else {
-      const filtered = users.filter(user => 
-        user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.district?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      setFilteredUsers(filtered)
+    if (searchTerm.length >= 3) {
+      setUsers(searchResults)
+    } else if (searchTerm.length === 0) {
+      // Reload initial users when search is cleared
+      const loadInitialUsers = async () => {
+        if (!user) return
+        
+        setLoading(true)
+        try {
+          const data = await loadUsersData('')
+          setUsers(data)
+        } catch (error) {
+          console.error('Error loading initial users:', error)
+          setError('Failed to load users')
+        } finally {
+          setLoading(false)
+        }
+      }
+      
+      loadInitialUsers()
     }
-  }, [searchTerm, users])
+  }, [searchResults, searchTerm, user])
+  
+  // Determine current loading state
+  const isLoading = searchTerm.length >= 3 ? searchLoading : loading
+
+  // Load more users function
+  const loadMoreUsers = async () => {
+    if (!hasMore || loadingMore) return
+    
+    const nextPage = currentPage + 1
+    await loadUsersData(searchTerm)
+    setCurrentPage(nextPage)
+  }
+
+  // Infinite scroll effect
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.innerHeight + document.documentElement.scrollTop !== document.documentElement.offsetHeight || loadingMore || !hasMore) {
+        return
+      }
+      loadMoreUsers()
+    }
+
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [hasMore, loadingMore, currentPage])
+
+
 
   const handleAutoDetect = async () => {
     setIsDetecting(true);
@@ -238,15 +339,17 @@ const Users: React.FC = () => {
           return;
         }
         
-        const { data: existingUser, error: userError } = await supabase
+        const { data: existingUserArray, error: userError } = await supabase
           .from('users')
           .select('*')
           .eq('phone', result.activePhone)
-          .single();
+          .limit(1);
+        
+        const existingUser = existingUserArray && existingUserArray.length > 0 ? existingUserArray[0] : null;
         
         if (existingUser && !userError) {
           // User found - filter the users list to show only this user
-          setFilteredUsers([existingUser]);
+          // User found in database, no need to update users state
           setDialogContent({ 
             phone: result.activePhone, 
             userName: `${existingUser.name} (${existingUser.label})`, 
@@ -255,7 +358,7 @@ const Users: React.FC = () => {
           setShowUserFoundDialog(true);
         } else {
           // User not found - show empty results and recommend registration
-          setFilteredUsers([]);
+          // No users found, users state will be empty from database query
           setDialogContent({ 
             phone: result.activePhone, 
             userName: '', 
@@ -366,17 +469,28 @@ const Users: React.FC = () => {
             placeholder="Search users by name, phone, city, or district (min 3 characters)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        {filteredUsers.length === 0 ? (
+        {isLoading ? (
+          <div className="text-center py-12">
+            <div className="text-gray-400 mb-2">
+              <svg className="w-8 h-8 mx-auto animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <p className="text-gray-500">Loading users...</p>
+          </div>
+        ) : !users || users.length === 0 ? (
           <div className="text-center py-12">
             {searchTerm.length >= 3 ? (
               <div className="text-gray-500">
                 No users found matching your search.
               </div>
-            ) : users.length === 0 ? (
+            ) : (
               <div className="space-y-4">
                 <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
                   <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -411,15 +525,11 @@ const Users: React.FC = () => {
                   </button>
                 </div>
               </div>
-            ) : (
-              <div className="text-gray-500">
-                Enter at least 3 characters to search users.
-              </div>
             )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredUsers.map((user) => (
+            {(users || []).map((user) => (
               <div
                 key={user.id}
                 className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
@@ -447,15 +557,37 @@ const Users: React.FC = () => {
                     </svg>
                     <span>{user.district}, {user.city}</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293A1 1 0 005 16h12M7 13v4a2 2 0 002 2h6a2 2 0 002-2v-4" />
-                    </svg>
-                    <span>{userCarts[user.id] || user.cart_count || 0} cart(s)</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293A1 1 0 005 16h12M7 13v4a2 2 0 002 2h6a2 2 0 002-2v-4" />
+                      </svg>
+                      <span>{userCarts[user.id] || user.cart_count || 0} cart(s)</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      <span className="font-medium text-blue-600">{userOrders[user.id] || 0} order(s)</span>
+                    </div>
                   </div>
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        
+        {/* Load More Indicator */}
+        {loadingMore && (
+          <div className="flex justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          </div>
+        )}
+        
+        {/* End of Results Indicator */}
+        {!hasMore && users && users.length > 0 && (
+          <div className="text-center py-8 text-gray-500">
+            No more users to load
           </div>
         )}
       </div>

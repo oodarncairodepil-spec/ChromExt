@@ -149,23 +149,24 @@ serve(async (req: Request) => {
         const { data, error } = await supabaseAnon.from("products").select(`
           name, 
           description,
-          product_images!inner(
+          product_images(
             image_url,
             is_primary
           )
-        `).eq("id", productId).single();
+        `).eq("id", productId).limit(1);
         
-        if (!error && data) {
-          title = data.name ?? "Product";
-          description = data.description || title;
+        if (!error && data && data.length > 0) {
+          const productData = data[0];
+          title = productData.name ?? "Product";
+          description = productData.description || title;
           
           // Get primary image from product_images table
-          const primary = data.product_images?.find((img: any) => img.is_primary);
+          const primary = productData.product_images?.find((img: any) => img.is_primary);
           if (primary?.image_url) {
             imageUrl = primary.image_url;
-          } else if (data.product_images?.length > 0) {
+          } else if (productData.product_images?.length > 0) {
             // Fallback to first image if no primary is set
-            imageUrl = data.product_images[0].image_url;
+            imageUrl = productData.product_images[0].image_url;
           }
         }
       }

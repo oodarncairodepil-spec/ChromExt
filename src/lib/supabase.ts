@@ -41,20 +41,13 @@ export const supabase = createClient(supabaseUrl, clientKey, {
   // Supabase will automatically handle authentication headers
 });
 
-// Admin client for storage operations (only create if service key is available)
-const supabaseAdmin = supabaseServiceKey 
+// Admin client for storage operations and admin auth operations (only create if service key is available)
+// WARNING: Service role key bypasses RLS - only use for admin operations like creating staff with confirmed emails
+export const supabaseAdmin = supabaseServiceKey 
   ? createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
-      },
-      global: {
-        headers: {
-          'apikey': supabaseServiceKey,
-          'Authorization': `Bearer ${supabaseServiceKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        }
       }
     })
   : null;
@@ -120,6 +113,20 @@ export async function uploadProductImage(file: File, productId: string, isPrimar
   try {
     // Upload image to storage
     const imageUrl = await uploadImage(file, 'products', productId)
+    
+    // If this is a primary image, first set all existing primary images to false
+    if (isPrimary) {
+      const { error: updateError } = await supabase
+        .from('product_images')
+        .update({ is_primary: false })
+        .eq('product_id', productId)
+        .eq('is_primary', true)
+      
+      if (updateError) {
+        console.error('Error updating existing primary images:', updateError)
+        // Don't throw here, continue with insert as the trigger should handle it
+      }
+    }
     
     // Save image record to product_images table
     const { error } = await supabase
@@ -235,7 +242,7 @@ export const fetchUsers = async () => {
   }
 };
 
-export const fetchTemplates = async () => {
+export const fetchTemplates = async (page: number = 0, limit: number = 200, searchQuery: string = '', ownerId?: string | null, isStaff?: boolean) => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -243,12 +250,37 @@ export const fetchTemplates = async () => {
       return [];
     }
 
-    const { data, error } = await supabase
+    // Determine which user_id to use (owner's ID for staff)
+    const userIdToUse = isStaff && ownerId ? ownerId : user.id
+
+    const from = page * limit;
+    const to = from + limit - 1;
+
+    // Build query with search functionality
+    let query = supabase
       .from('quick_reply_templates')
       .select('id, title, message, preview_content, image_url, image_name, is_active, usage_count, product_id, is_system, is_deletable, created_at, updated_at')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .order('usage_count', { ascending: false });
+      .eq('user_id', userIdToUse)
+      .eq('is_active', true);
+
+    // Add search filters if search query is provided
+    if (searchQuery && searchQuery.length >= 3) {
+      // Split search query into individual words for better matching
+      const searchWords = searchQuery.trim().split(/\s+/).filter(word => word.length > 0);
+      
+      // Create OR conditions for all words across all searchable fields
+      const allConditions = searchWords.flatMap(word => [
+        `title.ilike.%${word}%`,
+        `message.ilike.%${word}%`,
+        `preview_content.ilike.%${word}%`
+      ]);
+      
+      query = query.or(allConditions.join(','));
+    }
+
+    const { data, error } = await query
+      .order('usage_count', { ascending: false })
+      .range(from, to);
     
     if (error) throw error;
     return data || [];

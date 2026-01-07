@@ -20,6 +20,7 @@ interface ProductFormData {
   weight: string;
   status: string;
   has_variants: boolean;
+  has_notes: boolean;
 }
 
 interface VariantTierForm {
@@ -39,7 +40,8 @@ const ProductCreate: React.FC = () => {
     is_digital: false,
     weight: '',
     status: 'active',
-    has_variants: false
+    has_variants: false,
+    has_notes: false
   })
   const [variantTiers, setVariantTiers] = useState<VariantTierForm[]>([])
   const [previewCombinations, setPreviewCombinations] = useState<VariantCombination[]>([])
@@ -255,6 +257,7 @@ const ProductCreate: React.FC = () => {
         weight: formData.weight ? parseFormattedInput(formData.weight) : null,
         status: formData.status,
         has_variants: formData.has_variants, // Add has_variants flag
+        has_notes: formData.has_notes, // Add has_notes flag
         image: null // Will be updated after image upload
       }
 
@@ -538,6 +541,24 @@ const ProductCreate: React.FC = () => {
               </div>
               <p className="text-sm text-gray-500 mt-1">
                 Enable this to create multiple variations of this product with different properties.
+              </p>
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="flex items-center space-x-2">
+                <input
+                  id="has_notes"
+                  type="checkbox"
+                  checked={formData.has_notes}
+                  onChange={(e) => handleInputChange('has_notes', e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="has_notes" className="text-sm font-medium text-gray-700">
+                  Allow customers to add notes when ordering this product
+                </label>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Enable this to allow customers to add special instructions or notes for this product.
               </p>
             </div>
           </div>

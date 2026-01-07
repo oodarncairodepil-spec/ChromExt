@@ -8,6 +8,7 @@ import LocationPicker from '../components/LocationPicker'
 import InvoiceModal from '../components/InvoiceModal'
 import { LocationResult } from '../hooks/useLocationSearch'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
 import { parseLocationTextEnhanced } from '../utils/locationParser'
 import { generateInvoiceImage, generateOrderSummaryText } from '../utils/invoiceGenerator'
 import { formatPhoneNumber, formatPhoneNumberDisplay, normalizePhoneForQuery } from '../utils/phoneFormatter'
@@ -185,13 +186,13 @@ const CourierOption: React.FC<{ courier: Courier; isSelected: boolean; onClick: 
             .from('user_profiles')
             .select('shop_logo_url')
             .eq('user_id', user.id)
-            .single();
+            .maybeSingle();
           
           if (data && data.shop_logo_url) {
             setShopLogo(data.shop_logo_url);
           }
         } catch (error) {
-          console.error('Error fetching shop logo:', error);
+          // Silently handle errors - shop logo is optional
         }
       }
     };
@@ -244,6 +245,7 @@ const CourierOption: React.FC<{ courier: Courier; isSelected: boolean; onClick: 
 
 const Cart: React.FC = () => {
   const { user } = useAuth()
+  const { hasPermission, ownerId, isStaff } = usePermissions()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [cartItems, setCartItems] = useState<CartItem[]>([])
@@ -388,9 +390,13 @@ const Cart: React.FC = () => {
 
   useEffect(() => {
     const mode = searchParams.get('mode')
+    // Detect active edit session snapshot even if mode is missing
+    const persistedEditRaw = user ? localStorage.getItem(`edit_mode_data_${user.id}`) : null
+    const persistedEdit = persistedEditRaw ? JSON.parse(persistedEditRaw) : null
+    const hasActiveEdit = !!(persistedEdit?.isEditMode || persistedEdit?.existingDraftId)
     
-    // Only load cart items from database if not in edit mode
-    if (mode !== 'edit') {
+    // Only load cart items from database if not in edit mode and no active edit snapshot
+    if (mode !== 'edit' && !hasActiveEdit) {
       loadCartItems()
     }
     
@@ -410,12 +416,39 @@ const Cart: React.FC = () => {
     }
   }, [user])
 
+  // Track initialization to prevent autosave from overwriting restored edit data
+  const [isInitialized, setIsInitialized] = useState(false)
+
   // Auto-save cart data when form fields change
   useEffect(() => {
-    if (user) {
+    if (user && isInitialized) {
       saveCartData()
     }
-  }, [manualBuyerPhone, manualBuyerName, manualBuyerAddress, manualBuyerCityDistrict, selectedBuyerLocation, shippingDestination, selectedShipping, discountType, discountValue, selectedBuyer, buyerSearch, user])
+  }, [
+    manualBuyerPhone,
+    manualBuyerName,
+    manualBuyerAddress,
+    manualBuyerCityDistrict,
+    selectedBuyerLocation,
+    shippingDestination,
+    selectedShipping,
+    discountType,
+    discountValue,
+    selectedBuyer,
+    buyerSearch,
+    // Persist edit session changes across navigation
+    cartItems,
+    partialPaymentAmount,
+    selectedCourier,
+    selectedService,
+    shippingFee,
+    shippingFeeDisplay,
+    selectedPaymentMethod,
+    orderNotes,
+    existingDraftId,
+    user,
+    isInitialized
+  ])
 
   // Check for existing draft when buyer phone changes (skip in edit mode)
   useEffect(() => {
@@ -481,6 +514,8 @@ const Cart: React.FC = () => {
         selectedService,
         shippingFee,
         shippingFeeDisplay,
+        // Persist partial payment to restore when returning to edit mode
+        partialPaymentAmount,
         orderNotes,
         existingDraftId,
         isEditMode: true
@@ -673,12 +708,63 @@ const Cart: React.FC = () => {
           console.log('📝 Setting order notes:', orderData.order_notes)
           setOrderNotes(orderData.order_notes)
         }
+
+        // Restore partial payment if available in editOrderData
+        try {
+          let ppFromObject: number | undefined
+          if (typeof orderData.partial_payment === 'string') {
+            try {
+              const parsed = JSON.parse(orderData.partial_payment)
+              ppFromObject = parsed?.amount
+            } catch (jsonErr) {
+              console.warn('⚠️ Failed to JSON.parse partial_payment from editOrderData:', jsonErr)
+            }
+          } else {
+            ppFromObject = orderData.partial_payment?.amount
+          }
+          const ppFromFlat = orderData.partial_payment_amount
+          const parsedPP = Number(ppFromObject ?? ppFromFlat ?? 0)
+          if (!Number.isNaN(parsedPP) && parsedPP > 0) {
+            console.log('💵 Restoring partial payment from editOrderData:', parsedPP)
+            setPartialPaymentAmount(parsedPP)
+          }
+        } catch (e) {
+          console.warn('⚠️ Failed to parse partial payment from editOrderData:', e)
+        }
         
         // Set existing draft ID if this is an existing order (supports both Orders.tsx and OrderDetail.tsx formats)
         const existingId = orderData.orderId || orderData.id
         if (existingId) {
           console.log('🔗 Setting existing draft ID:', existingId)
           setExistingDraftId(existingId)
+          // Fallback: fetch partial_payment from DB if not included in editOrderData
+          try {
+            const { data: existingOrder, error: existingErr } = await supabase
+              .from('orders')
+              .select('partial_payment, partial_payment_amount')
+              .eq('id', existingId)
+              .single()
+            if (!existingErr && existingOrder) {
+              let amtFromObject: number | undefined
+              if (typeof existingOrder.partial_payment === 'string') {
+                try {
+                  const parsed = JSON.parse(existingOrder.partial_payment)
+                  amtFromObject = parsed?.amount
+                } catch (jsonErr) {
+                  console.warn('⚠️ Failed to JSON.parse partial_payment from DB:', jsonErr)
+                }
+              } else {
+                amtFromObject = existingOrder.partial_payment?.amount
+              }
+              const amt = Number(amtFromObject ?? existingOrder.partial_payment_amount ?? 0)
+              if (!Number.isNaN(amt) && amt > 0) {
+                console.log('💵 Restoring partial payment from DB:', amt)
+                setPartialPaymentAmount(amt)
+              }
+            }
+          } catch (fetchErr) {
+            console.warn('⚠️ Failed to fetch partial payment for existing order:', fetchErr)
+          }
         }
         
         console.log('🧹 Clearing edit order data from localStorage')
@@ -686,6 +772,7 @@ const Cart: React.FC = () => {
         localStorage.removeItem('editOrderData')
         
         console.log('✅ Edit order data loaded successfully!')
+        setIsInitialized(true)
       } else {
         console.log('⚠️ No edit order data found in localStorage, checking persisted edit mode data...')
         const persistedKey = user ? `edit_mode_data_${user.id}` : null
@@ -715,6 +802,12 @@ const Cart: React.FC = () => {
           if (data.shippingFeeDisplay) setShippingFeeDisplay(data.shippingFeeDisplay)
           if (data.orderNotes) setOrderNotes(data.orderNotes)
           if (data.existingDraftId) setExistingDraftId(data.existingDraftId)
+          // Restore partial payment from persisted snapshot
+          if (data.partialPaymentAmount !== undefined) {
+            const pp = Number(data.partialPaymentAmount) || 0
+            console.log('💵 Restoring partial payment from persisted edit snapshot:', pp)
+            setPartialPaymentAmount(pp)
+          }
           
           // If shipping destination exists, recalculate shipping costs
           if (data.shippingDestination?.district_id) {
@@ -722,6 +815,7 @@ const Cart: React.FC = () => {
           }
           
           console.log('✅ Persisted edit mode data restored successfully')
+          setIsInitialized(true)
         } else {
           console.log('⚠️ No persisted edit mode data found; showing error')
           setError('No order data found for editing')
@@ -742,6 +836,70 @@ const Cart: React.FC = () => {
     const mode = searchParams.get('mode')
     
     try {
+      // Prefer restoring any active edit session snapshot, even if mode param is missing
+      const persistedEditRaw = localStorage.getItem(`edit_mode_data_${user.id}`)
+      if (persistedEditRaw) {
+        const data = JSON.parse(persistedEditRaw)
+        const hasActiveEdit = data?.isEditMode || !!data?.existingDraftId
+        if (hasActiveEdit) {
+          console.log('🔄 Restoring active edit session from localStorage:', data)
+          
+          // Restore all form data
+          setManualBuyerPhone(data.manualBuyerPhone || '')
+          setManualBuyerName(data.manualBuyerName || '')
+          setManualBuyerAddress(data.manualBuyerAddress || '')
+          setManualBuyerCityDistrict(data.manualBuyerCityDistrict || '')
+          setSelectedBuyerLocation(data.selectedBuyerLocation || null)
+          setShippingDestination(data.shippingDestination || {})
+          setSelectedShipping(data.selectedShipping || null)
+          setDiscountType(data.discountType || 'percentage')
+          setDiscountValue(data.discountValue || 0)
+          setSelectedBuyer(data.selectedBuyer || null)
+          setBuyerSearch(data.buyerSearch || '')
+          
+          // Restore cart items and other edit mode specific data
+          if (data.cartItems) {
+            setCartItems(data.cartItems)
+          }
+          if (data.selectedPaymentMethod) {
+            setSelectedPaymentMethod(data.selectedPaymentMethod)
+          }
+          if (data.selectedCourier) {
+            setSelectedCourier(data.selectedCourier)
+          }
+          if (data.selectedService) {
+            setSelectedService(data.selectedService)
+          }
+          if (data.shippingFee !== undefined) {
+            setShippingFee(data.shippingFee)
+          }
+          if (data.shippingFeeDisplay) {
+            setShippingFeeDisplay(data.shippingFeeDisplay)
+          }
+          if (data.orderNotes) {
+            setOrderNotes(data.orderNotes)
+          }
+          if (data.existingDraftId) {
+            setExistingDraftId(data.existingDraftId)
+          }
+          if (data.partialPaymentAmount !== undefined) {
+            const pp = Number(data.partialPaymentAmount) || 0
+            console.log('💵 Restoring partial payment from active edit snapshot:', pp)
+            setPartialPaymentAmount(pp)
+          }
+          
+          // If shipping destination exists, recalculate shipping costs
+          if (data.shippingDestination?.district_id) {
+            calculateShipping(data.shippingDestination.district_id)
+          }
+          
+          console.log('✅ Active edit snapshot restored successfully')
+          setLoading(false)
+          setIsInitialized(true)
+          return
+        }
+      }
+
       // First check for edit mode data if in edit mode
       if (mode === 'edit') {
         const editModeData = localStorage.getItem(`edit_mode_data_${user.id}`)
@@ -787,6 +945,11 @@ const Cart: React.FC = () => {
           if (data.existingDraftId) {
             setExistingDraftId(data.existingDraftId)
           }
+          if (data.partialPaymentAmount !== undefined) {
+            const pp = Number(data.partialPaymentAmount) || 0
+            console.log('💵 Restoring partial payment from edit_mode_data:', pp)
+            setPartialPaymentAmount(pp)
+          }
           
           // If shipping destination exists, recalculate shipping costs
           if (data.shippingDestination?.district_id) {
@@ -794,6 +957,9 @@ const Cart: React.FC = () => {
           }
           
           console.log('✅ Edit mode data restored successfully')
+          // Ensure page leaves loading state when restoring from persisted edit snapshot
+          setLoading(false)
+          setIsInitialized(true)
           return
         }
       }
@@ -820,13 +986,18 @@ const Cart: React.FC = () => {
         if (cartData.shippingDestination?.district_id) {
           calculateShipping(cartData.shippingDestination.district_id)
         }
+        // Ensure page leaves loading state when restoring regular persisted cart data
+        setLoading(false)
+        setIsInitialized(true)
       } else {
         // If no saved data, run auto-detect buyer
         autoDetectBuyer()
+        setIsInitialized(true)
       }
     } catch (error) {
       console.error('Error loading persisted cart data:', error)
       autoDetectBuyer()
+      setIsInitialized(true)
     }
   }
 
@@ -1071,11 +1242,15 @@ const Cart: React.FC = () => {
       // Create or find buyer
       let buyerId = null
       
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
       // Check if buyer exists by phone number using normalized formats
       const phoneFormats = normalizePhoneForQuery(manualBuyerPhone.trim())
       const { data: existingBuyerArray, error: buyerSearchError } = await supabase
         .from('users')
         .select('id')
+        .eq('user_id', userIdToUse)
         .or(`phone.eq.${phoneFormats[0]},phone.eq.${phoneFormats[1]}`)
         .limit(1)
       
@@ -1092,7 +1267,8 @@ const Cart: React.FC = () => {
             name: manualBuyerName.trim() || 'Unknown',
             address: manualBuyerAddress.trim() || '',
             city: manualBuyerCityDistrict.trim() || '',
-            district: ''
+            district: '',
+            user_id: userIdToUse // Use ownerId for staff
           })
           .select('id')
           .limit(1)
@@ -1130,6 +1306,7 @@ const Cart: React.FC = () => {
         districtId = parsedLocation.district_id
       }
       
+      const ppForDraft = existingDraftId ? (partialPaymentAmount || 0) : 0
       const orderData = {
         seller_id: user.id,
         buyer_id: buyerId,
@@ -1156,9 +1333,9 @@ const Cart: React.FC = () => {
         subtotal: subtotalAmount,
         total: totalAmount,
         partial_payment: {
-          enabled: (partialPaymentAmount || 0) > 0,
-          amount: partialPaymentAmount || 0,
-          remaining: Math.max(totalAmount - (partialPaymentAmount || 0), 0)
+          enabled: ppForDraft > 0,
+          amount: ppForDraft,
+          remaining: Math.max(totalAmount - ppForDraft, 0)
         },
         shipping_fee: shippingFee,
         status: 'draft',
@@ -1167,7 +1344,7 @@ const Cart: React.FC = () => {
         customer_phone: formatPhoneNumberDisplay(manualBuyerPhone.trim()),
         customer_city: cityId || manualBuyerCityDistrict.trim() || '',
         customer_district: districtId || '',
-        total_amount: Math.max(totalAmount - (partialPaymentAmount || 0), 0),
+        total_amount: Math.max(totalAmount - ppForDraft, 0),
         order_notes: orderNotes.trim() || null
       }
       
@@ -1253,10 +1430,11 @@ const Cart: React.FC = () => {
        }
       
       const total = subtotal + shippingCost + shippingFee - discountAmount
-      const remainingTotal = Math.max(total - (partialPaymentAmount || 0), 0)
+      const isEditingExistingOrder = !!existingDraftId
+      const ppForOrder = isEditingExistingOrder ? (partialPaymentAmount || 0) : 0
+      const remainingTotal = Math.max(total - ppForOrder, 0)
 
       // Create new order number only if NOT editing an existing order
-      const isEditingExistingOrder = !!existingDraftId
       const generatedOrderNumber = isEditingExistingOrder ? null : generateOrderNumber()
       console.log('=== CHECKOUT DEBUG ===');
       console.log('isEditingExistingOrder:', isEditingExistingOrder);
@@ -1287,6 +1465,9 @@ const Cart: React.FC = () => {
       console.log('Original phone:', manualBuyerPhone.trim())
       console.log('Formatted phone:', formattedPhone);
       
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
       // Check if user already exists using normalized phone formats
       const phoneFormats = normalizePhoneForQuery(manualBuyerPhone.trim())
       console.log('Checking user existence with phone formats:', phoneFormats)
@@ -1294,6 +1475,7 @@ const Cart: React.FC = () => {
       const { data: existingUserArray, error: userCheckError } = await supabase
         .from('users')
         .select('id')
+        .eq('user_id', userIdToUse)
         .or(`phone.eq.${phoneFormats[0]},phone.eq.${phoneFormats[1]}`)
         .limit(1)
       
@@ -1313,7 +1495,7 @@ const Cart: React.FC = () => {
            note: '',
            label: 'new',
            cart_count: 0,
-           user_id: user.id
+           user_id: userIdToUse // Use ownerId for staff
          }
         
         const { data: newUserArray, error: createUserError } = await supabase
@@ -1339,8 +1521,11 @@ const Cart: React.FC = () => {
       }
       
       // Base order data (shared between create and update)
+      // For staff, use owner's ID as seller_id, but set created_by to staff's ID
+      const sellerIdToUse = ownerId || user.id
       const baseOrderData = {
-        seller_id: user.id,
+        seller_id: sellerIdToUse,
+        created_by: isStaff ? user.id : null, // Track which staff created the order
         buyer_id: buyerId,
         customer_phone: formattedPhone,
         customer_name: manualBuyerName.trim(),
@@ -1356,8 +1541,8 @@ const Cart: React.FC = () => {
         },
         total: total,
         partial_payment: {
-          enabled: (partialPaymentAmount || 0) > 0,
-          amount: partialPaymentAmount || 0,
+          enabled: ppForOrder > 0,
+          amount: ppForOrder,
           remaining: remainingTotal
         },
         payment_method_id: selectedPaymentMethod.id,
@@ -1382,12 +1567,16 @@ const Cart: React.FC = () => {
       let targetOrderNumber: string | null = null
       
       if (isEditingExistingOrder && existingDraftId) {
-        // Update existing order: preserve existing order_number and status
+        // Update existing draft order: change status to 'New' when checking out
+        const updateOrderData = {
+          ...baseOrderData,
+          status: 'New' // Change status from 'draft' to 'New' when checking out
+        }
         const { data: updatedOrderArray, error: updateError } = await supabase
           .from('orders')
-          .update(baseOrderData)
+          .update(updateOrderData)
           .eq('id', existingDraftId)
-          .select('id, order_number')
+          .select('id, order_number, seller_id, status')
           .limit(1)
         
         const updatedOrder = updatedOrderArray && updatedOrderArray.length > 0 ? updatedOrderArray[0] : null
@@ -1463,7 +1652,7 @@ const Cart: React.FC = () => {
           discount_amount: discountAmount,
           total_amount: remainingTotal,
           full_total_amount: total,
-          partial_payment_amount: partialPaymentAmount || 0,
+          partial_payment_amount: ppForOrder,
           payment_method: {
             bank_name: selectedPaymentMethod.bank_name,
             account_number: selectedPaymentMethod.bank_account_number,
@@ -1735,6 +1924,29 @@ const Cart: React.FC = () => {
           console.log('📝 Loading order notes from draft:', draftOrder.order_notes)
           setOrderNotes(draftOrder.order_notes)
         }
+
+        // Restore partial payment from draft order if present
+        try {
+          let ppFromObject: number | undefined
+          if (typeof draftOrder.partial_payment === 'string') {
+            try {
+              const parsed = JSON.parse(draftOrder.partial_payment)
+              ppFromObject = parsed?.amount
+            } catch (jsonErr) {
+              console.warn('⚠️ Failed to JSON.parse partial_payment from draft order:', jsonErr)
+            }
+          } else {
+            ppFromObject = draftOrder.partial_payment?.amount
+          }
+          const ppFromFlat = draftOrder.partial_payment_amount
+          const parsedPP = Number(ppFromObject ?? ppFromFlat ?? 0)
+          if (!Number.isNaN(parsedPP) && parsedPP > 0) {
+            console.log('💵 Restoring partial payment from draft order:', parsedPP)
+            setPartialPaymentAmount(parsedPP)
+          }
+        } catch (e) {
+          console.warn('⚠️ Failed to parse partial payment from draft order:', e)
+        }
         
         // Restore cart items - transform draft items to proper CartItem structure
         if (draftOrder.items && Array.isArray(draftOrder.items)) {
@@ -1889,9 +2101,14 @@ const Cart: React.FC = () => {
       
       // Search for existing user with this phone number
       const phoneFormats = normalizePhoneForQuery(phoneNumber)
+      
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
       const { data: existingUsers, error } = await supabase
         .from('users')
         .select('*')
+        .eq('user_id', userIdToUse)
         .or(`phone.eq.${phoneFormats[0]},phone.eq.${phoneFormats[1]}`)
         .limit(1)
 
@@ -1952,9 +2169,14 @@ const Cart: React.FC = () => {
     
     try {
       setLoadingBuyers(true)
+      
+      // Determine which user_id to use (owner's ID for staff)
+      const userIdToUse = isStaff && ownerId ? ownerId : user.id
+      
       const { data, error } = await supabase
         .from('users')
         .select('*')
+        .eq('user_id', userIdToUse)
         .or(`name.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,address.ilike.%${searchTerm}%`)
         .limit(10)
       
@@ -2967,22 +3189,24 @@ const Cart: React.FC = () => {
             <span className="text-gray-600">Subtotal ({totalItems} items)</span>
             <span className="font-medium">Rp {Math.floor(subtotalAmount).toLocaleString('id-ID')}</span>
           </div>
-          {discountAmount > 0 && (
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600">Discount</span>
-              <span className="font-medium text-green-600">-Rp {Math.floor(discountAmount).toLocaleString('id-ID')}</span>
-            </div>
-          )}
           {shippingFee > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-600">Shipping Fee</span>
               <span className="font-medium">Rp {shippingFee.toLocaleString('id-ID')}</span>
             </div>
           )}
+          {discountAmount > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600">
+                Discount{discountType === 'percentage' ? ` (${discountValue}%)` : ''}
+              </span>
+              <span className="font-medium text-green-600">-Rp {Math.floor(discountAmount).toLocaleString('id-ID')}</span>
+            </div>
+          )}
           {partialPaymentAmount > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-600">Partial Payment</span>
-              <span className="font-medium text-blue-700">-Rp {Math.floor(partialPaymentAmount).toLocaleString('id-ID')}</span>
+              <span className="font-medium text-green-600">-Rp {Math.floor(partialPaymentAmount).toLocaleString('id-ID')}</span>
             </div>
           )}
           <div className="border-t pt-2">
@@ -2998,8 +3222,9 @@ const Cart: React.FC = () => {
         <div className="space-y-2 mt-4">
           <button 
             onClick={handleCheckout}
+            disabled={!hasPermission('can_create_orders') || !selectedPaymentMethod || !selectedCourier || !selectedService || !manualBuyerPhone.trim() || !manualBuyerName.trim() || !manualBuyerAddress.trim() || !manualBuyerCityDistrict.trim()}
             className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-              selectedPaymentMethod && selectedCourier && selectedService && manualBuyerPhone.trim() && manualBuyerName.trim() && manualBuyerAddress.trim() && manualBuyerCityDistrict.trim()
+              hasPermission('can_create_orders') && selectedPaymentMethod && selectedCourier && selectedService && manualBuyerPhone.trim() && manualBuyerName.trim() && manualBuyerAddress.trim() && manualBuyerCityDistrict.trim()
                 ? 'bg-blue-600 text-white hover:bg-blue-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}

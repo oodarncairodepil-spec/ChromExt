@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Compression Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .image-info {
+            background: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .working-example {
+            background: #e8f5e8;
+            border-color: #4caf50;
+        }
+        .issue-example {
+            background: #ffe8e8;
+            border-color: #f44336;
+        }
+        img {
+            max-width: 300px;
+            height: auto;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Image Compression Test Results</h1>
+    
+    <div class="test-section working-example">
+        <h2>✅ Working Example (Properly Compressed)</h2>
+        <p>This image was compressed using the current compression system:</p>
+        <img src="https://oeikkeghjcclwgqzsvou.supabase.co/storage/v1/object/public/products/a1924431-5cac-44d1-8bfe-95443e5f5917/1759801931540-tysguhuwx4.jpeg" alt="Compressed image example">
+        <div class="image-info">
+            <strong>File Size:</strong> 192KB (properly compressed)<br>
+            <strong>Status:</strong> ✅ Under 300KB limit for WhatsApp<br>
+            <strong>Compression:</strong> Working correctly
+        </div>
+    </div>
+    
+    <div class="test-section issue-example">
+        <h2>❌ Issue Example (Not Compressed)</h2>
+        <p>This image appears to be uncompressed (2.6MB):</p>
+        <img src="https://oeikkeghjcclwgqzsvou.supabase.co/storage/v1/object/public/products/a4b96d89-6569-41b2-b6f8-1781b4abd496/1759835532313-3h0ghoaxl9l.png" alt="Uncompressed image example">
+        <div class="image-info">
+            <strong>File Size:</strong> 2.6MB (not compressed)<br>
+            <strong>Status:</strong> ❌ Exceeds 300KB limit for WhatsApp<br>
+            <strong>Issue:</strong> Likely uploaded before compression was implemented
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>🔧 Current Compression Settings</h2>
+        <p>The image compression utility is configured with:</p>
+        <ul>
+            <li><strong>Max Size:</strong> 300KB (for WhatsApp compatibility)</li>
+            <li><strong>Max Width:</strong> 1200px</li>
+            <li><strong>Max Height:</strong> 630px</li>
+            <li><strong>Quality:</strong> 0.8 (80%)</li>
+            <li><strong>Format:</strong> JPEG</li>
+        </ul>
+    </div>
+    
+    <div class="test-section">
+        <h2>📝 Recommendations</h2>
+        <ol>
+            <li><strong>For new uploads:</strong> The compression system is working correctly</li>
+            <li><strong>For existing large images:</strong> Re-upload them through the product edit interface to apply compression</li>
+            <li><strong>For batch processing:</strong> Run the batch resize script to compress all existing images</li>
+        </ol>
+    </div>
+    
+    <div class="test-section">
+        <h2>🧪 Test the Compression</h2>
+        <p>To test image compression:</p>
+        <ol>
+            <li>Go to your product management interface</li>
+            <li>Edit any product</li>
+            <li>Upload a large image (>1MB)</li>
+            <li>Check that it gets compressed to under 300KB</li>
+            <li>Verify the compression info is displayed during upload</li>
+        </ol>
+    </div>
+</body>
+</html>

@@ -1,29 +1,101 @@
-# Batch Image Resize Script
+# Scripts Directory
+
+This directory contains utility scripts for database maintenance, debugging, and setup operations.
+
+## Directory Structure
+
+```
+scripts/
+├── README.md (this file)
+├── database/          # Database-related scripts (check, fix, debug, create, diagnose)
+├── maintenance/       # General maintenance scripts (check, fix, debug, create, diagnose, restore)
+├── test/             # Test files (JS, HTML, data files)
+│   └── data/         # Test data files (JSON, TXT, XLSX)
+├── assets/            # Test assets
+│   └── test-images/  # Test images (courier logos, etc.)
+└── [other scripts]    # Various utility scripts
+```
+
+## Script Categories
+
+### Database Scripts (`database/`)
+Scripts for database operations, RLS policies, schema checks, and data integrity:
+- `check-*.js` - Database schema and data validation scripts
+- `fix-*.js` - Database fixes and migrations
+- `debug-*.js` - Database debugging utilities
+- `create-*.js` - Database setup and creation scripts
+- `diagnose-*.js` - Database diagnostic tools
+
+### Maintenance Scripts (`maintenance/`)
+General maintenance and utility scripts:
+- `check-*.js` - Validation and checking scripts
+- `fix-*.js` - Fix and repair scripts
+- `debug-*.js` - Debugging utilities
+- `create-*.js` - Setup and creation scripts
+- `diagnose-*.js` - Diagnostic tools
+- `restore-*.js` - Restore and recovery scripts
+
+## Running Scripts
+
+Most scripts require environment variables to be set. Make sure your `.env` file contains:
+```
+PLASMO_PUBLIC_SUPABASE_URL=your_supabase_url
+PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+Then run scripts directly with Node.js:
+```bash
+node scripts/maintenance/check-images.js
+node scripts/database/check-current-rls.js
+node scripts/test/test-db.js
+```
+
+## Directory Organization
+
+**Note**: The `test-files/` directory has been merged into `scripts/`:
+- Test JS/HTML files → `scripts/test/`
+- Test data files → `scripts/test/data/`
+- Test images → `scripts/assets/test-images/`
+- Debug/fix scripts → `scripts/database/` or `scripts/maintenance/`
+
+## Other Scripts
+
+### Image Processing
+- `batch-compress-images.js` - Batch compress images in Supabase storage
+- `batchResizeImages.ts` - TypeScript version of image resizing
+- `nodeImageCompression.js` - Node.js image compression utility
+
+### Database Setup
+- `setup-couriers.js` - Setup shipping couriers
+- `add-custom-courier.js` - Add custom courier
+- `upload-courier-logos.js` - Upload courier logos to storage
+
+### Testing (`test/`)
+Test files for development and debugging:
+- `test-*.js` - Test scripts (courier, database, environment, logo parsing)
+- `test-*.html` - Test HTML files (WhatsApp, CORS, template preview, etc.)
+- `test/data/` - Test data files (JSON, TXT, XLSX)
+- `debug-*.js` - Debug scripts (moved to `database/` or `maintenance/`)
+
+### Test Assets (`assets/test-images/`)
+- Courier logo images for testing
+- Other test images
+
+### Testing Utilities
+- `test-db.js` (in `test/`) - Database connection testing
+- `check_database_data.js` - Database data validation
+
+## Batch Image Resize Script
 
 This script compresses all existing images in your Supabase storage to under 300KB for WhatsApp compatibility.
 
-## Prerequisites
-
-1. Make sure your environment variables are set up in `.env` file:
-   ```
-   PLASMO_PUBLIC_SUPABASE_URL=your_supabase_url
-   PLASMO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-   ```
-
-2. Ensure you have the required dependencies installed:
-   ```bash
-   npm install
-   ```
-
-## Running the Script
-
-To resize all existing images in your Supabase storage:
+### Running the Script
 
 ```bash
 npm run resize-images
 ```
 
-## What the Script Does
+### What the Script Does
 
 1. **Fetches all product images** from the `product_images` table in your database
 2. **Downloads each image** from Supabase storage
@@ -36,37 +108,6 @@ npm run resize-images
 5. **Replaces the original** image in Supabase storage with the compressed version
 6. **Processes in batches** of 5 images at a time to avoid overwhelming the system
 7. **Provides detailed progress** and final statistics
-
-## Output Example
-
-```
-🚀 Starting batch image resize process...
-📋 Fetching all product images...
-📊 Found 25 images to process
-
-🔄 Processing batch 1/5 (5 images)
-Processing image: https://your-supabase-url/storage/v1/object/public/products/image1.jpg
-Compressing image: 1.2 MB -> target: <300KB
-Compressed to: 287 KB (76% reduction)
-✅ Successfully processed: https://your-supabase-url/storage/v1/object/public/products/image1.jpg
-
-📊 Batch Resize Results:
-========================
-✅ Successfully compressed: 20
-⏭️ Skipped (already <300KB): 3
-❌ Failed: 2
-📁 Total images processed: 25
-💾 Total size reduction: 15.3 MB -> 4.8 MB (69% reduction)
-
-🎉 Batch resize process completed!
-```
-
-## Error Handling
-
-- The script handles network errors gracefully
-- Failed images are logged with specific error messages
-- Processing continues even if individual images fail
-- A summary of all errors is provided at the end
 
 ## Safety Features
 
@@ -94,17 +135,3 @@ Compressed to: 287 KB (76% reduction)
 4. **Memory issues**
    - The script processes images in batches to manage memory
    - Very large images (>10MB) may cause issues
-
-### Manual Verification
-
-After running the script, you can verify the results by:
-1. Checking the file sizes in your Supabase storage dashboard
-2. Testing image uploads in your application
-3. Verifying WhatsApp compatibility by sharing compressed images
-
-## Technical Details
-
-- Uses the same compression utility as the upload process
-- Maintains original file names and paths
-- Updates images in-place using Supabase storage `update` method
-- Preserves image metadata and public URLs

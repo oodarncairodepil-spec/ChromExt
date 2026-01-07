@@ -16,6 +16,8 @@ interface InvoiceData {
   shipping_cost: number
   discount_amount: number
   total_amount: number
+  full_total_amount?: number
+  partial_payment_amount?: number
   payment_method: {
     bank_name: string
     account_number: string
@@ -196,6 +198,22 @@ export const generateInvoiceImage = async (invoiceData: InvoiceData): Promise<st
       ctx.fillText(`Rp ${invoiceData.shipping_cost.toLocaleString('id-ID')}`, rightAlignX - 100, y)
       y += lineHeight
     }
+
+    // Show full total before partial payment if provided
+    if (typeof invoiceData.full_total_amount === 'number') {
+      ctx.font = 'bold 14px Arial'
+      ctx.fillText('Total:', labelX, y)
+      ctx.fillText(`Rp ${invoiceData.full_total_amount.toLocaleString('id-ID')}`, rightAlignX - 100, y)
+      y += lineHeight
+    }
+
+    // Show partial payment (DP) if applicable
+    if ((invoiceData.partial_payment_amount || 0) > 0) {
+      ctx.font = '14px Arial'
+      ctx.fillText('Paid (DP):', labelX, y)
+      ctx.fillText(`-Rp ${(invoiceData.partial_payment_amount || 0).toLocaleString('id-ID')}`, rightAlignX - 100, y)
+      y += lineHeight
+    }
     
     // Total due (right aligned, bold)
     ctx.font = 'bold 16px Arial'
@@ -298,11 +316,22 @@ export const generateOrderSummaryText = (invoiceData: InvoiceData): string => {
   if (invoiceData.discount_amount > 0) {
     summary += `Discount: Rp${invoiceData.discount_amount.toLocaleString('id-ID')}\n`
   }
+  if (typeof invoiceData.full_total_amount === 'number') {
+    summary += `Total: Rp${invoiceData.full_total_amount.toLocaleString('id-ID')}\n`
+  }
+  if ((invoiceData.partial_payment_amount || 0) > 0) {
+    summary += `Dibayar (DP): Rp${(invoiceData.partial_payment_amount || 0).toLocaleString('id-ID')}\n`
+    summary += `Sisa bayar: Rp${invoiceData.total_amount.toLocaleString('id-ID')}\n`
+  }
   
   summary += `Total Pembayaran : Rp${invoiceData.total_amount.toLocaleString('id-ID')}\n\n`
   summary += 'Untuk pembayaran, bisa transfer kesini ya kak:\n'
-  summary += `${invoiceData.payment_method.bank_name} - ${invoiceData.payment_method.account_number}/${invoiceData.payment_method.account_owner}, Rp ${invoiceData.total_amount.toLocaleString('id-ID')}\n\n`
-  summary += 'Pesanan akan kita proses pada saat pembayaran sudah kami terima ya, Kak! Mohon mengirimkan bukti transfer jikalau sudah melakukan transfer. Terima kasih'
+  summary += `${invoiceData.payment_method.bank_name} - ${invoiceData.payment_method.account_number}/${invoiceData.payment_method.account_owner}, Rp${invoiceData.total_amount.toLocaleString('id-ID')}\n\n`
+  summary += '1. First paid first booked ditunggu pembayaran DP 50% maksimal 6 jam setelah rekapan total diberikan dan pelunasan dtunggu sampai H-1 sblm jam 12:00\n'
+  summary += '2. Konfirmasi transfer harap menyertakan bukti transfer Screenshot / foto langsung (tidak menerima bukti copy & paste)\n'
+  summary += '3. Pastikan alamat yang di data  sudah lengkap dan benar ya\n'
+  summary += '4. Pembayaran yang sudah di transfer tidak bisa dikembalikan, pemesanan bisa di reschedule dengan pemberitahuan dgn menanyakan ketersediaan slot melalui admin\n\n'
+  summary += 'Mohon di cek kembali ya kak'
   
   return summary
 }

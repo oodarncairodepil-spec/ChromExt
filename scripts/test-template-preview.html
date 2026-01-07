@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Template Preview Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .url-test {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Template Preview System Test</h1>
+    
+    <div class="test-section">
+        <h2>Current Issue Analysis</h2>
+        <div class="status error">
+            <strong>Problem:</strong> Template ID <code>6c8205c9-1bce-4c95-aa9e-1813e534a1c2</code> does not exist in the database.
+        </div>
+        <div class="status info">
+            <strong>Root Cause:</strong> The template was likely created in a local development environment or test database that doesn't exist in the deployed Supabase instance.
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Template Preview Function Status</h2>
+        <div class="status success">
+            <strong>✅ Function Deployed:</strong> The preview function has been successfully updated and deployed to handle template_id parameters.
+        </div>
+        <div class="status success">
+            <strong>✅ Template Support:</strong> The function now queries the quick_reply_templates table and generates appropriate Open Graph meta tags.
+        </div>
+        <div class="status success">
+            <strong>✅ Image Redirection:</strong> When a template has an image_url, users are redirected directly to the image.
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>How Template Preview Works</h2>
+        <ol>
+            <li><strong>URL Format:</strong> <code>https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?template_id=[UUID]</code></li>
+            <li><strong>Database Query:</strong> Function queries <code>quick_reply_templates</code> table for the template</li>
+            <li><strong>Crawler Detection:</strong> Identifies if request is from WhatsApp/social media crawler</li>
+            <li><strong>Response Type:</strong>
+                <ul>
+                    <li><strong>Crawlers:</strong> Returns HTML with Open Graph meta tags</li>
+                    <li><strong>Humans:</strong> Redirects to template image (if available)</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>Testing Template Preview</h2>
+        <p>To test the template preview functionality:</p>
+        
+        <div class="url-test">
+            <h3>1. Create a Template with Image</h3>
+            <p>Use the Chrome extension to create a new template with an image attachment.</p>
+        </div>
+        
+        <div class="url-test">
+            <h3>2. Get Template ID</h3>
+            <p>Copy the template ID from the template detail page or database.</p>
+        </div>
+        
+        <div class="url-test">
+            <h3>3. Test Preview URL</h3>
+            <p>Visit: <code>https://oeikkeghjcclwgqzsvou.supabase.co/functions/v1/preview?template_id=[YOUR_TEMPLATE_ID]</code></p>
+        </div>
+        
+        <div class="url-test">
+            <h3>4. Test in WhatsApp</h3>
+            <p>Share the preview URL in WhatsApp to see the rich preview with image and text.</p>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Image Compression System</h2>
+        <div class="status success">
+            <strong>✅ Compression Active:</strong> All template images are automatically compressed to under 300KB for WhatsApp compatibility.
+        </div>
+        <div class="status info">
+            <strong>Settings:</strong>
+            <ul>
+                <li>Max Size: 300KB</li>
+                <li>Dimensions: 1200x630px (optimal for social sharing)</li>
+                <li>Quality: 80% JPEG compression</li>
+                <li>Format: All images converted to JPEG</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Next Steps</h2>
+        <ol>
+            <li><strong>Create Test Template:</strong> Use the extension to create a template with an image</li>
+            <li><strong>Verify Database:</strong> Ensure the template exists in the quick_reply_templates table</li>
+            <li><strong>Test Preview:</strong> Use the correct template ID to test the preview functionality</li>
+            <li><strong>WhatsApp Integration:</strong> Share the preview URL in WhatsApp to verify rich previews</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>Documentation Updated</h2>
+        <div class="status success">
+            <strong>✅ Comprehensive Documentation:</strong> Updated with template preview system and image compression details.
+        </div>
+        <p>The documentation now includes:</p>
+        <ul>
+            <li>Template preview functionality</li>
+            <li>Image compression system</li>
+            <li>Open Graph meta tag generation</li>
+            <li>Usage examples and integration points</li>
+        </ul>
+    </div>
+</body>
+</html>

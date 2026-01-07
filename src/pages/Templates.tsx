@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, fetchTemplates } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionContext'
 import { generateWhatsAppMessage } from '../utils/ogUtils'
 import { sendToWhatsAppWithImage } from '../utils/imageUtils'
 import { improvedSendToWhatsApp } from '../utils/improvedImageUtils'
 import useDebouncedSearch from '../hooks/useDebouncedSearch'
 import { processOrderTemplate, OrderData } from '../utils/templateProcessor'
+import LoadingDialog from '../components/LoadingDialog'
 
 interface Template {
   id: string;
@@ -26,12 +28,14 @@ interface Template {
 const Templates: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { hasPermission, ownerId, isStaff } = usePermissions()
   const [searchTerm, setSearchTerm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [showProcessedPreview, setShowProcessedPreview] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
   
   // Sample order data for template preview
   const sampleOrderData: OrderData = {
@@ -88,7 +92,7 @@ const Templates: React.FC = () => {
   const searchTemplates = async (query: string) => {
     if (!user) return []
     
-    const data = await fetchTemplates(0, 200, query)
+    const data = await fetchTemplates(0, 200, query, ownerId, isStaff)
     return data || []
   }
   
@@ -104,9 +108,15 @@ const Templates: React.FC = () => {
   useEffect(() => {
     if (searchTerm === '' && user) {
       const loadInitialTemplates = async () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/c4dca2cc-238f-43ad-af27-831a7b92127a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Templates.tsx:110',message:'loadInitialTemplates called',data:{userId:user.id,isStaff:isStaff,ownerId:ownerId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         setLoading(true)
         try {
-          const data = await fetchTemplates(0, 200, '')
+          const data = await fetchTemplates(0, 200, '', ownerId, isStaff)
+          // #region agent log
+          fetch('http://127.0.0.1:7246/ingest/c4dca2cc-238f-43ad-af27-831a7b92127a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Templates.tsx:116',message:'Templates loaded',data:{templateCount:data?.length||0,userId:user.id,isStaff:isStaff,ownerId:ownerId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+          // #endregion
           setTemplates(data || [])
         } catch (error) {
           console.error('Error loading initial templates:', error)
@@ -116,7 +126,7 @@ const Templates: React.FC = () => {
       }
       loadInitialTemplates()
     }
-  }, [searchTerm, user])
+  }, [searchTerm, user, ownerId, isStaff])
   
   // Update templates when search results change
   useEffect(() => {
@@ -128,7 +138,7 @@ const Templates: React.FC = () => {
         const loadInitialTemplates = async () => {
           setLoading(true)
           try {
-            const data = await fetchTemplates(0, 200, '')
+            const data = await fetchTemplates(0, 200, '', ownerId, isStaff)
             setTemplates(data || [])
           } catch (error) {
             console.error('Error loading initial templates:', error)
@@ -174,6 +184,7 @@ const Templates: React.FC = () => {
     // Clear any existing messages
     setError(null)
     setSuccess(null)
+    setIsSending(true)
     
     try {
       // Process template with sample data if it contains placeholders
@@ -212,6 +223,8 @@ const Templates: React.FC = () => {
       console.error('Error sending template to WhatsApp:', error)
       setError('Failed to send template to WhatsApp')
       setTimeout(() => setError(null), 3000)
+    } finally {
+      setIsSending(false)
     }
   }
   
@@ -240,7 +253,7 @@ const Templates: React.FC = () => {
       await createTemplatesForAllSellers();
       setSuccess('Templates created successfully for all sellers');
       // Refresh the templates list
-      const data = await fetchTemplates(0, 200, searchTerm);
+      const data = await fetchTemplates(0, 200, searchTerm, ownerId, isStaff);
       setTemplates(data || []);
     } catch (error) {
       console.error('Error creating templates for all sellers:', error);
@@ -255,7 +268,7 @@ const Templates: React.FC = () => {
     if (user && searchTerm.length === 0) {
       const loadInitialTemplates = async () => {
         try {
-          const data = await fetchTemplates(0, 200)
+          const data = await fetchTemplates(0, 200, '', ownerId, isStaff)
           // This will be handled by the search hook when searchTerm is empty
         } catch (error) {
           console.error('Error loading initial templates:', error)
@@ -263,7 +276,7 @@ const Templates: React.FC = () => {
       }
       loadInitialTemplates()
     }
-  }, [user])
+  }, [user, ownerId, isStaff])
 
   // Update error state from search hook
   useEffect(() => {
@@ -316,7 +329,7 @@ const Templates: React.FC = () => {
         <div className="flex items-center space-x-3">
           <button
             onClick={handleCreateTemplatesForAllSellers}
-            className="flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+            className="hidden"
             disabled={loading}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -434,11 +447,17 @@ const Templates: React.FC = () => {
                 </button>
                 
                 {/* Send Button */}
-                <button
-                  onClick={(e) => handleSendImage(e, template)}
-                  className="p-2 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-sm hover:shadow-md transition-all duration-200 group"
-                  title="Send to WhatsApp"
-                >
+                {hasPermission('can_send_templates') && (
+                  <button
+                    onClick={(e) => handleSendImage(e, template)}
+                    disabled={isSending}
+                    className={`p-2 bg-white bg-opacity-90 rounded-full shadow-sm transition-all duration-200 group ${
+                      isSending 
+                        ? 'opacity-50 cursor-not-allowed' 
+                        : 'hover:bg-opacity-100 hover:shadow-md'
+                    }`}
+                    title="Send to WhatsApp"
+                  >
                   <svg 
                     className="w-4 h-4 text-gray-600 group-hover:text-blue-600 transition-colors" 
                     fill="none" 
@@ -452,7 +471,8 @@ const Templates: React.FC = () => {
                       d="M5 12h14m-7-7l7 7-7 7" 
                     />
                   </svg>
-                </button>
+                  </button>
+                )}
               </div>
               {template.image_url && (
                 <div className="h-32 overflow-hidden">
@@ -514,6 +534,12 @@ const Templates: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Loading Dialog - Uninterruptible */}
+      <LoadingDialog 
+        isOpen={isSending}
+        message={isSending ? 'Sending text and image to WhatsApp...' : ''}
+      />
 
     </div>
   )

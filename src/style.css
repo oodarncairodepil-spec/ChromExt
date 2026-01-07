@@ -7,12 +7,22 @@
     box-sizing: border-box;
   }
   
-  body {
+  html, body {
+    height: 100%;
     margin: 0;
     padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  
+  body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+  
+  #__plasmo {
+    height: 100%;
   }
 }
 

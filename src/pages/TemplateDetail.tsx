@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase, fetchTemplates, fetchProducts } from '../lib/supabase'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { usePermissions } from '../contexts/PermissionContext'
 
 interface Product {
   id: string;
@@ -35,6 +36,7 @@ interface Template {
 const TemplateDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { hasPermission, ownerId, isStaff } = usePermissions()
   const [template, setTemplate] = useState<Template | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +75,7 @@ const TemplateDetail: React.FC = () => {
       setLoading(true)
       setError(null)
       
-      const templatesData = await fetchTemplates()
+      const templatesData = await fetchTemplates(0, 200, '', ownerId, isStaff)
       const templateData = templatesData.find(t => t.id === id)
       
       if (!templateData) {
@@ -225,21 +227,25 @@ const TemplateDetail: React.FC = () => {
           <div className="flex flex-wrap gap-2">
             {!isEditing ? (
               <>
-                <button
-                  onClick={handleDelete}
-                  className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Delete
-                </button>
-                <button
-                  onClick={handleEdit}
-                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-                >
-                  Edit
-                </button>
+                {hasPermission('can_delete_templates') && (
+                  <button
+                    onClick={handleDelete}
+                    className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete
+                  </button>
+                )}
+                {hasPermission('can_edit_templates') && (
+                  <button
+                    onClick={handleEdit}
+                    className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                  >
+                    Edit
+                  </button>
+                )}
               </>
             ) : (
               <>
