@@ -5,6 +5,7 @@ import Loading from '../components/Loading'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../contexts/PermissionContext'
 import { fixImageUrl, createFallbackImage } from '../utils/imageUtils'
+import { formatPhoneNumber, normalizePhoneForQuery } from '../utils/phoneFormatter'
 
 interface Order {
   id: string
@@ -333,6 +334,7 @@ const Orders: React.FC = () => {
   const [showFilterModal, setShowFilterModal] = useState(false)
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const filterModalRef = useRef<HTMLDivElement>(null)
+  const [isDetecting, setIsDetecting] = useState(false)
 
   // Load orders when user changes or when navigating to this page
   useEffect(() => {
@@ -465,11 +467,23 @@ const Orders: React.FC = () => {
 
     // Filter by search term
     if (searchTerm) {
-      filtered = filtered.filter(order => 
-        order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        order.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        order.customer_phone.includes(searchTerm)
-      )
+      // Normalize search term for phone number matching
+      const searchDigits = searchTerm.replace(/\D/g, '')
+      const phoneFormats = normalizePhoneForQuery(searchTerm)
+      
+      filtered = filtered.filter(order => {
+        // Search by order number and customer name (case-insensitive)
+        const matchesOrderNumber = order.order_number.toLowerCase().includes(searchTerm.toLowerCase())
+        const matchesCustomerName = order.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
+        
+        // Search by phone number (supports multiple formats)
+        const orderPhoneDigits = order.customer_phone.replace(/\D/g, '')
+        const matchesPhone = order.customer_phone.includes(searchTerm) ||
+                            orderPhoneDigits.includes(searchDigits) ||
+                            phoneFormats.some(format => order.customer_phone.includes(format))
+        
+        return matchesOrderNumber || matchesCustomerName || matchesPhone
+      })
     }
 
     // Filter by status (case-insensitive comparison)
@@ -616,8 +630,32 @@ const Orders: React.FC = () => {
                 placeholder="Cari nama, no telepon pembeli/no pesanan..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-12 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-24 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              {/* Auto Detect Button */}
+              <button
+                onClick={handleAutoDetect}
+                disabled={isDetecting}
+                className="absolute right-12 top-1/2 transform -translate-y-1/2 px-3 py-1 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-green-400 flex items-center space-x-1"
+                title="Auto Detect Phone Number from WhatsApp"
+              >
+                {isDetecting ? (
+                  <>
+                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Detecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>Auto</span>
+                  </>
+                )}
+              </button>
               {/* Filter Icon */}
               <button
                 onClick={() => setShowFilterModal(!showFilterModal)}

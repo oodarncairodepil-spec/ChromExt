@@ -100,6 +100,16 @@ The system uses a prioritized detection strategy:
   - Automatically populates search field
   - User lookup and registration dialog
 
+#### 3. `src/pages/Orders.tsx`
+- **Function**: `handleAutoDetect()`
+- **Lines**: ~499-700 (approximate)
+- **Purpose**: Auto-detect phone number for order search
+- **Key Features**:
+  - Same detection logic as Cart.tsx and Users.tsx
+  - Automatically populates search field
+  - Enhanced search logic supports multiple phone formats
+  - Searches orders by customer phone number
+
 #### 3. `src/utils/phoneFormatter.ts`
 - **Functions**:
   - `formatPhoneNumber(phone: string): string`
