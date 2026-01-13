@@ -508,6 +508,259 @@ const Orders: React.FC = () => {
     setFilteredOrders(filtered)
   }, [orders, searchTerm, statusFilter, dateRange])
 
+  // Auto-detect phone number from WhatsApp Web
+  const handleAutoDetect = async () => {
+    setIsDetecting(true)
+    try {
+      // Check if Chrome APIs are available
+      if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.scripting) {
+        alert('Chrome extension APIs not available. Please make sure you are using this extension in a Chrome browser.')
+        return
+      }
+
+      // Query for the active tab
+      const tabs = await chrome.tabs.query({ 
+        active: true, 
+        currentWindow: true 
+      })
+      
+      if (tabs.length === 0) {
+        alert('No active tab found.')
+        return
+      }
+      
+      const tab = tabs[0]
+      
+      if (!tab.id) {
+        alert('Unable to access tab information.')
+        return
+      }
+
+      // Check if it's WhatsApp Web
+      if (!tab.url?.includes('web.whatsapp.com')) {
+        alert('Please open WhatsApp Web in the active tab')
+        return
+      }
+
+      // Execute script to extract phone number (same logic as Cart.tsx and Users.tsx)
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          try {
+            // Function to extract phone number from WhatsApp data-id attribute
+            // Handles both formats: @c.us and @lid_
+            const extractPhoneFromDataId = (dataId: string): string | null => {
+              // WhatsApp data-id formats:
+              // - "true_PHONENUMBER@c.us_MESSAGEID" (regular chat)
+              // - "true_PHONENUMBER@lid_ID" (some chats use @lid_ instead)
+              // - "false_PHONENUMBER@c.us_MESSAGEID" or "false_PHONENUMBER@lid_ID"
+              const phoneMatch = dataId.match(/(?:true_|false_)?(\d+)@(?:c\.us|lid_)/)
+              return phoneMatch ? phoneMatch[1] : null
+            }
+            
+            // First, try to get phone number from visible text in chat header
+            const mainChatHeader = document.querySelector('#main header') || 
+                                   document.querySelector('[data-testid="chat-header"]') ||
+                                   document.querySelector('header[role="banner"]') ||
+                                   document.querySelector('header')
+            if (mainChatHeader) {
+              const selectableTexts = mainChatHeader.querySelectorAll('[data-testid="selectable-text"]')
+              const copyableTexts = mainChatHeader.querySelectorAll('.copyable-text, .selectable-text')
+              
+              const allTextElements = new Set<Element>()
+              selectableTexts.forEach(el => allTextElements.add(el))
+              copyableTexts.forEach(el => allTextElements.add(el))
+              
+              // Also check ALL elements in header (more aggressive search)
+              const allHeaderElements = mainChatHeader.querySelectorAll('*')
+              allHeaderElements.forEach(el => {
+                const text = el.textContent?.trim() || ''
+                const digits = text.replace(/\D/g, '')
+                if (text.length > 0 && (digits.length >= 10 || text.includes('+') || text.match(/\d{3,}/))) {
+                  allTextElements.add(el)
+                }
+              })
+              
+              mainChatHeader.querySelectorAll('span, div, p, h1, h2, h3, h4, h5, h6').forEach(el => {
+                allTextElements.add(el)
+              })
+              
+              // Prioritize elements
+              const prioritizedElements: Element[] = []
+              const otherElements: Element[] = []
+              
+              for (const element of Array.from(allTextElements)) {
+                const hasCopyableClass = element.classList.contains('copyable-text') || 
+                                        element.classList.contains('selectable-text') ||
+                                        element.hasAttribute('data-testid')
+                if (hasCopyableClass) {
+                  prioritizedElements.push(element)
+                } else {
+                  otherElements.push(element)
+                }
+              }
+              
+              const elementsToCheck = [...prioritizedElements, ...otherElements]
+              
+              for (const element of elementsToCheck) {
+                const text = element.textContent?.trim() || ''
+                const digits = text.replace(/\D/g, '')
+                
+                if (text.length > 0 && (digits.length >= 8 || text.includes('+') || text.includes('-') || /^\d/.test(text))) {
+                  if (text && digits.length >= 10) {
+                    const hasPhonePattern = (
+                      text.includes('+') ||
+                      text.match(/[\d\s\-\(\)]{10,}/) ||
+                      /^[\d\s\+\-\(\)]+$/.test(text) ||
+                      digits.length >= 10
+                    )
+                    
+                    if (hasPhonePattern || (digits.length >= 10 && digits.length <= 15 && (text.includes('+') || text.includes('-') || text.match(/\d{3,}/)))) {
+                      return {
+                        success: true,
+                        phone: digits,
+                        method: 'visible-text'
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Fallback: Look for phone number in data-id attributes
+            const phoneNumbers = new Set<string>()
+            
+            // Check main chat header elements first (highest priority)
+            if (mainChatHeader) {
+              const headerDataIds = mainChatHeader.querySelectorAll('[data-id]')
+              for (const element of headerDataIds) {
+                const dataId = element.getAttribute('data-id')
+                if (dataId) {
+                  const phone = extractPhoneFromDataId(dataId)
+                  if (phone && phone.length >= 10) {
+                    phoneNumbers.add(phone)
+                    return {
+                      success: true,
+                      phone: phone,
+                      method: 'data-id-main-header'
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Check other header elements
+            const headerElements = document.querySelectorAll('header [data-id], [role="banner"] [data-id]')
+            for (const element of headerElements) {
+              if (mainChatHeader && mainChatHeader.contains(element)) continue
+              
+              const dataId = element.getAttribute('data-id')
+              if (dataId) {
+                const phone = extractPhoneFromDataId(dataId)
+                if (phone && phone.length >= 10) {
+                  phoneNumbers.add(phone)
+                  return {
+                    success: true,
+                    phone: phone,
+                    method: 'data-id-header'
+                  }
+                }
+              }
+            }
+            
+            // Check chat header elements
+            const chatHeaderElements = document.querySelectorAll('[data-testid="chat-header"] [data-id], .chat-header [data-id]')
+            for (const element of chatHeaderElements) {
+              const dataId = element.getAttribute('data-id')
+              if (dataId) {
+                const phone = extractPhoneFromDataId(dataId)
+                if (phone && phone.length >= 10) {
+                  phoneNumbers.add(phone)
+                  return {
+                    success: true,
+                    phone: phone,
+                    method: 'data-id-chat-header'
+                  }
+                }
+              }
+            }
+            
+            // Last fallback: check data-id elements when visible text is not available
+            const mainChatArea = document.querySelector('#main')
+            
+            if (mainChatArea) {
+              const mainChatDataIds = mainChatArea.querySelectorAll('[data-id]')
+              
+              const phoneCandidates: Array<{phone: string, element: Element, y: number, inHeader: boolean}> = []
+              
+              for (const element of Array.from(mainChatDataIds)) {
+                const dataId = element.getAttribute('data-id')
+                if (dataId) {
+                  const phone = extractPhoneFromDataId(dataId)
+                  if (phone && phone.length >= 10) {
+                    const rect = element.getBoundingClientRect()
+                    const inHeader = mainChatHeader ? mainChatHeader.contains(element) : false
+                    
+                    phoneCandidates.push({
+                      phone,
+                      element,
+                      y: rect.top,
+                      inHeader
+                    })
+                  }
+                }
+              }
+              
+              phoneCandidates.sort((a, b) => {
+                if (a.inHeader && !b.inHeader) return -1
+                if (!a.inHeader && b.inHeader) return 1
+                return a.y - b.y
+              })
+              
+              if (phoneCandidates.length > 0) {
+                const bestCandidate = phoneCandidates[0]
+                return {
+                  success: true,
+                  phone: bestCandidate.phone,
+                  method: 'data-id-main-chat-prioritized'
+                }
+              }
+            }
+            
+            return {
+              success: false,
+              error: 'No phone number found'
+            }
+          } catch (error: any) {
+            return {
+              success: false,
+              error: error.message || 'Unknown error occurred'
+            }
+          }
+        }
+      })
+      
+      const result = results[0]?.result
+      
+      if (result?.success && result.phone) {
+        // Format the phone number
+        const formattedPhone = formatPhoneNumber(result.phone)
+        
+        // Set search term to detected phone number
+        setSearchTerm(formattedPhone)
+        
+        // The search will automatically trigger via useEffect when searchTerm changes
+      } else {
+        alert('Could not detect phone number from current chat. Please make sure you have an active chat open and the phone number is visible in the chat header.')
+      }
+    } catch (error: any) {
+      console.error('Auto-detect error:', error)
+      alert(`Error detecting phone number: ${error.message || 'Unknown error'}`)
+    } finally {
+      setIsDetecting(false)
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
