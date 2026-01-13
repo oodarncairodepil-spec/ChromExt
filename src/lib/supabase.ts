@@ -12,13 +12,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // Service role key bypasses RLS and should only be used for admin operations
 const clientKey = supabaseAnonKey;
 
-// Debug logging
-console.log('🔧 Supabase Debug Info:');
-console.log('  - NODE_ENV:', process.env.NODE_ENV);
-console.log('  - PLASMO_TARGET:', process.env.PLASMO_TARGET);
-console.log('  - Has service key:', !!supabaseServiceKey);
-console.log('  - Using anonymous key for RLS enforcement');
-console.log('  - Client key type: ANON');
+// Debug logging (only in development)
+// Use a const to ensure proper tree-shaking in production builds
+const IS_DEV = process.env.NODE_ENV === 'development';
+if (IS_DEV) {
+  console.log('🔧 Supabase Debug Info:');
+  console.log('  - NODE_ENV:', process.env.NODE_ENV);
+  console.log('  - PLASMO_TARGET:', process.env.PLASMO_TARGET);
+  console.log('  - Has service key:', !!supabaseServiceKey);
+  console.log('  - Using anonymous key for RLS enforcement');
+  console.log('  - Client key type: ANON');
+}
 
 export const supabase = createClient(supabaseUrl, clientKey, {
   auth: {

@@ -252,62 +252,223 @@ const Users: React.FC = () => {
         return;
       }
       
-      // Execute script to extract phone number from WhatsApp Web using comprehensive data-id method
+      // Execute script to extract phone number from WhatsApp Web using improved detection method
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
           try {
             // Function to extract phone number from WhatsApp data-id attribute
+            // Handles both formats: @c.us and @lid_
             const extractPhoneFromDataId = (dataId: string): string | null => {
-              // WhatsApp data-id format: "true_PHONENUMBER@c.us_MESSAGEID" or similar
-              const phoneMatch = dataId.match(/(?:true_|false_)?(\d+)@c\.us/)
+              // WhatsApp data-id formats:
+              // - "true_PHONENUMBER@c.us_MESSAGEID" (regular chat)
+              // - "true_PHONENUMBER@lid_ID" (some chats use @lid_ instead)
+              // - "false_PHONENUMBER@c.us_MESSAGEID" or "false_PHONENUMBER@lid_ID"
+              const phoneMatch = dataId.match(/(?:true_|false_)?(\d+)@(?:c\.us|lid_)/)
               return phoneMatch ? phoneMatch[1] : null
             }
-
+            
+            // First, try to get phone number from visible text in chat header
+            // Focus on the main chat header (not sidebar) - look for #main header or chat header
+            const mainChatHeader = document.querySelector('#main header') || 
+                                   document.querySelector('[data-testid="chat-header"]') ||
+                                   document.querySelector('header[role="banner"]') ||
+                                   document.querySelector('header')
+            if (mainChatHeader) {
+              // Look for phone number in selectable-text elements within the main chat header
+              const selectableTexts = mainChatHeader.querySelectorAll('[data-testid="selectable-text"]')
+              
+              // Also check for elements with copyable-text class
+              const copyableTexts = mainChatHeader.querySelectorAll('.copyable-text, .selectable-text')
+              
+              // Combine both sets
+              const allTextElements = new Set<Element>()
+              selectableTexts.forEach(el => allTextElements.add(el))
+              copyableTexts.forEach(el => allTextElements.add(el))
+              
+              // Also check ALL elements in header (more aggressive search)
+              const allHeaderElements = mainChatHeader.querySelectorAll('*')
+              allHeaderElements.forEach(el => {
+                const text = el.textContent?.trim() || ''
+                const digits = text.replace(/\D/g, '')
+                if (text.length > 0 && (digits.length >= 10 || text.includes('+') || text.match(/\d{3,}/))) {
+                  allTextElements.add(el)
+                }
+              })
+              
+              // Always also include all span, div, and p elements for comprehensive search
+              mainChatHeader.querySelectorAll('span, div, p, h1, h2, h3, h4, h5, h6').forEach(el => {
+                allTextElements.add(el)
+              })
+              
+              // Check each element for phone number patterns
+              // Prioritize elements that are more likely to contain the phone number
+              const prioritizedElements: Element[] = []
+              const otherElements: Element[] = []
+              
+              for (const element of Array.from(allTextElements)) {
+                const hasCopyableClass = element.classList.contains('copyable-text') || 
+                                        element.classList.contains('selectable-text') ||
+                                        element.hasAttribute('data-testid')
+                if (hasCopyableClass) {
+                  prioritizedElements.push(element)
+                } else {
+                  otherElements.push(element)
+                }
+              }
+              
+              // Check prioritized elements first
+              const elementsToCheck = [...prioritizedElements, ...otherElements]
+              
+              for (const element of elementsToCheck) {
+                const text = element.textContent?.trim() || ''
+                const digits = text.replace(/\D/g, '')
+                
+                if (text.length > 0 && (digits.length >= 8 || text.includes('+') || text.includes('-') || /^\d/.test(text))) {
+                  // Check if text looks like a phone number
+                  if (text && digits.length >= 10) {
+                    const hasPhonePattern = (
+                      text.includes('+') || // Has country code indicator
+                      text.match(/[\d\s\-\(\)]{10,}/) || // Has phone-like formatting
+                      /^[\d\s\+\-\(\)]+$/.test(text) || // All phone-like characters
+                      digits.length >= 10 // Just has enough digits (most lenient)
+                    )
+                    
+                    if (hasPhonePattern || (digits.length >= 10 && digits.length <= 15 && (text.includes('+') || text.includes('-') || text.match(/\d{3,}/)))) {
+                      // Extract digits and country code
+                      return {
+                        success: true,
+                        phoneNumbers: [digits],
+                        activePhone: digits,
+                        totalFound: 1,
+                        method: 'visible-text'
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Fallback: Look for phone number in data-id attributes (prioritize main chat header)
             const phoneNumbers = new Set<string>()
-
-            // Search for elements with data-id attributes
-            const elementsWithDataId = document.querySelectorAll('[data-id]')
-            elementsWithDataId.forEach(element => {
-              const dataId = element.getAttribute('data-id')
-              if (dataId) {
-                const phone = extractPhoneFromDataId(dataId)
-                if (phone && phone.length >= 10) {
-                  phoneNumbers.add(phone)
+            
+            // Check main chat header elements first (highest priority)
+            if (mainChatHeader) {
+              const headerDataIds = mainChatHeader.querySelectorAll('[data-id]')
+              for (const element of headerDataIds) {
+                const dataId = element.getAttribute('data-id')
+                if (dataId) {
+                  const phone = extractPhoneFromDataId(dataId)
+                  if (phone && phone.length >= 10) {
+                    phoneNumbers.add(phone)
+                    // Return immediately if found in main header (highest priority)
+                    return {
+                      success: true,
+                      phoneNumbers: [phone],
+                      activePhone: phone,
+                      totalFound: 1,
+                      method: 'data-id-main-header'
+                    }
+                  }
                 }
               }
-            })
-
-            // Also check header and sidebar for active chat indicators
+            }
+            
+            // Check other header elements (lower priority)
             const headerElements = document.querySelectorAll('header [data-id], [role="banner"] [data-id]')
-            headerElements.forEach(element => {
+            for (const element of headerElements) {
+              if (mainChatHeader && mainChatHeader.contains(element)) continue
+              
               const dataId = element.getAttribute('data-id')
               if (dataId) {
                 const phone = extractPhoneFromDataId(dataId)
                 if (phone && phone.length >= 10) {
                   phoneNumbers.add(phone)
+                  return {
+                    success: true,
+                    phoneNumbers: [phone],
+                    activePhone: phone,
+                    totalFound: 1,
+                    method: 'data-id-header'
+                  }
                 }
               }
-            })
-
-            // Additional fallback: look for phone numbers in specific WhatsApp elements
+            }
+            
+            // Check chat header elements
             const chatHeaderElements = document.querySelectorAll('[data-testid="chat-header"] [data-id], .chat-header [data-id]')
-            chatHeaderElements.forEach(element => {
+            for (const element of chatHeaderElements) {
               const dataId = element.getAttribute('data-id')
               if (dataId) {
                 const phone = extractPhoneFromDataId(dataId)
                 if (phone && phone.length >= 10) {
                   phoneNumbers.add(phone)
+                  return {
+                    success: true,
+                    phoneNumbers: [phone],
+                    activePhone: phone,
+                    totalFound: 1,
+                    method: 'data-id-chat-header'
+                  }
                 }
               }
-            })
-
-            const phoneArray = Array.from(phoneNumbers)
+            }
+            
+            // Last fallback: check data-id elements when visible text is not available
+            // This happens when WhatsApp Web hides the phone number
+            const mainChatArea = document.querySelector('#main')
+            
+            if (mainChatArea) {
+              const mainChatDataIds = mainChatArea.querySelectorAll('[data-id]')
+              
+              // Create a map of phone numbers to their elements and positions
+              const phoneCandidates: Array<{phone: string, element: Element, y: number, inHeader: boolean}> = []
+              
+              for (const element of Array.from(mainChatDataIds)) {
+                const dataId = element.getAttribute('data-id')
+                if (dataId) {
+                  const phone = extractPhoneFromDataId(dataId)
+                  if (phone && phone.length >= 10) {
+                    const rect = element.getBoundingClientRect()
+                    const inHeader = mainChatHeader ? mainChatHeader.contains(element) : false
+                    
+                    phoneCandidates.push({
+                      phone,
+                      element,
+                      y: rect.top,
+                      inHeader
+                    })
+                  }
+                }
+              }
+              
+              // Sort candidates: prioritize those in header, then by Y position (top to bottom)
+              phoneCandidates.sort((a, b) => {
+                if (a.inHeader && !b.inHeader) return -1
+                if (!a.inHeader && b.inHeader) return 1
+                return a.y - b.y
+              })
+              
+              // Return the first (most likely) candidate
+              if (phoneCandidates.length > 0) {
+                const bestCandidate = phoneCandidates[0]
+                return {
+                  success: true,
+                  phoneNumbers: [bestCandidate.phone],
+                  activePhone: bestCandidate.phone,
+                  totalFound: 1,
+                  method: 'data-id-main-chat-prioritized'
+                }
+              }
+            }
+            
+            // Return error if nothing found
             return {
-              success: true,
-              phoneNumbers: phoneArray,
-              activePhone: phoneArray[0] || null,
-              totalFound: phoneArray.length
+              success: false,
+              error: 'No phone number found',
+              phoneNumbers: [],
+              activePhone: null,
+              totalFound: 0
             }
           } catch (error: any) {
             return {

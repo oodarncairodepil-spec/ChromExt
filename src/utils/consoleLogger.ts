@@ -63,7 +63,16 @@ function getLocation(): string {
   return 'unknown';
 }
 
+// Use a const to ensure proper tree-shaking in production builds
+const IS_DEV = process.env.NODE_ENV === 'development';
+
 function sendLog(logData: LogData): void {
+  // Only send logs in development mode or if explicitly enabled
+  // Skip in production to avoid unnecessary network requests and errors
+  if (!IS_DEV && !(typeof window !== 'undefined' && (window as any).__ENABLE_DEBUG_LOGGING__)) {
+    return;
+  }
+  
   try {
     // Send to debug endpoint
     // Use keepalive for service workers to ensure request completes
@@ -74,17 +83,17 @@ function sendLog(logData: LogData): void {
       keepalive: true // Important for service workers
     });
     
-    // Log fetch errors to help debug
+    // Log fetch errors to help debug (only in development)
     fetchPromise.catch((err) => {
       // Only log fetch errors in development/debugging
       // Use original console methods to avoid infinite loop
-      if (typeof console !== 'undefined' && (console as any).__originalError) {
+      if (IS_DEV && typeof console !== 'undefined' && (console as any).__originalError) {
         (console as any).__originalError('❌ Console logger fetch failed:', err, 'Context:', logData.context);
       }
     });
   } catch (e) {
-    // Log to console if fetch is not available
-    if (typeof console !== 'undefined' && (console as any).__originalError) {
+    // Log to console if fetch is not available (only in development)
+    if (IS_DEV && typeof console !== 'undefined' && (console as any).__originalError) {
       (console as any).__originalError('❌ Console logger sendLog exception:', e, 'Context:', logData.context);
     }
   }
@@ -136,8 +145,14 @@ function createLogInterceptor(originalMethod: typeof console.log, level: LogData
 /**
  * Initialize console logging to capture all console output
  * Call this early in your script/entry point
+ * Only initializes in development mode to avoid unnecessary overhead in production
  */
 export function initConsoleLogger(): void {
+  // Skip initialization in production unless explicitly enabled
+  if (!IS_DEV && !(typeof window !== 'undefined' && (window as any).__ENABLE_DEBUG_LOGGING__)) {
+    return;
+  }
+  
   // Only initialize once
   if ((console as any).__loggerInitialized) {
     return;

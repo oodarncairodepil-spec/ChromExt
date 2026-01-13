@@ -190,9 +190,9 @@ const App: React.FC = () => {
   return (
     <AuthProvider>
       <PermissionProvider>
-        <Router>
-          <AuthenticatedApp />
-        </Router>
+      <Router>
+        <AuthenticatedApp />
+      </Router>
       </PermissionProvider>
     </AuthProvider>
   )
